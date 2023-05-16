@@ -1,0 +1,12 @@
+[gd_scene load_steps=3 format=3 uid="uid://vult6hvyjien"]
+
+[ext_resource type="Script" path="res://RTMaterial.cs" id="1_yvcjp"]
+
+[sub_resource type="SphereMesh" id="SphereMesh_g5ct1"]
+radius = 0.05
+height = 0.1
+
+[node name="Sphere" type="MeshInstance3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.535751, 0, -4.88169)
+mesh = SubResource("SphereMesh_g5ct1")
+script = ExtResource("1_yvcjp")
