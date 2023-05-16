@@ -3,11 +3,12 @@
 
 // #include "res://Shader/rtx_utilities.gdshaderinc"
 
-const uint MAX_BOUNCES = 64u;
-const uint NUM_RAYS = 1024u;
+const uint MAX_BOUNCES = 30u;
+const uint NUM_RAYS = 100u;
 const float FAR = 4000.0f;
 const float RAY_POS_NORMAL_NUDGE = 0.01f;
 const float TWO_PI = 6.28318530718f;
+// const float RECENT_FRAME_BIAS = 0.1f;
 
 struct Ray {
     vec3 origin;
@@ -117,12 +118,12 @@ void TraceScene(in Ray ray, inout HitInfo hitInfo) {
         hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
 	}
 
-	if(RaySphere(ray, vec3(0,5,-3), 3, hitInfo)) {
-		hitInfo.albedo = vec3(0.6f, 0.7f, 0.1f);
-        hitInfo.emissive = vec3(1.0f, 0.8f, 0.1f);  
+	if(RaySphere(ray, vec3(0,3,-3), 1.5f, hitInfo)) {
+		hitInfo.albedo = vec3(1.0f, 1.0f, 1.0f);
+        hitInfo.emissive = vec3(1.0f, 1.0f, 1.0f);  
 	}
 
-    if(RaySphere(ray, vec3(0,-22, 0), 20, hitInfo)) {
+    if(RaySphere(ray, vec3(0,-21, 0), 20, hitInfo)) {
 		hitInfo.albedo = vec3(0.2f, 0.9f, 0.1f);
         hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
 	}
@@ -138,6 +139,8 @@ vec3 GetColorForRay(in Ray ray, inout uint rngState)
 	nextRay.dir = ray.dir;
 
     vec3 test;
+
+    bool directHit = false;
      
     for(uint rayIndex = 0u; rayIndex <= NUM_RAYS; ++rayIndex) {
         for (uint bounceIndex = 0u; bounceIndex <= MAX_BOUNCES; ++bounceIndex)
@@ -147,13 +150,15 @@ vec3 GetColorForRay(in Ray ray, inout uint rngState)
             hitInfo.dist = FAR;
             TraceScene(nextRay, hitInfo);
 
-            if(hitInfo.didHit) {
-                test += hitInfo.albedo;
+            if(hitInfo.didHit && bounceIndex == 0u) {
+                directHit = true;
             }
             
             // if the ray missed, we are done
             if (hitInfo.dist == FAR) {
-                ret += GetSkyGradient(ray) / NUM_RAYS;
+                //if(!directHit) 
+                vec3 skyColor = GetSkyGradient(ray) / NUM_RAYS;
+                ret += skyColor * throughput;
                 break;
             }
                 
@@ -202,6 +207,8 @@ layout(binding = 3, std430) restrict buffer DirectionalLightBuffer {
 }
 directional_light_data;
 
+layout(binding = 4, rgba32f) uniform image2D LAST_TEXTURE;
+
 // Buffer for all spheres in the scene
 /*layout(set = 0, binding = 4, std430) restrict buffer SpheresBuffer {
     vec4 xyzr[];
@@ -224,14 +231,10 @@ void main() {
     uint rngState = uint(uint(gl_GlobalInvocationID.x) * uint(1973) + uint(gl_GlobalInvocationID.y) * uint(9277) + camera_data.frame * uint(26699)) | uint(1);
     vec4 color = vec4(GetColorForRay(ray, rngState), 1.0f);
 
-    // color = vec4(1,0,0,1);
-
     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    vec4 lastFrameColor = imageLoad(LAST_TEXTURE, texel);
+    imageStore(LAST_TEXTURE, texel, color);
 
-    vec4 lastFrameColor = imageLoad(OUTPUT_TEXTURE, texel);
     color = mix(lastFrameColor, color, 1.0f / (camera_data.frame + 1.0f));
-
-    // color = vec4(camera_data.frame / 600, 0, 0, 1);
-
     imageStore(OUTPUT_TEXTURE, texel, color);
 }

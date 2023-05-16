@@ -56,128 +56,6 @@ public partial class ComputeTest : Sprite2D
         [FieldOffset(12)] public float intensity;
     }
 
-    /*struct Matrix4x4
-    {
-        public float xx = 0, xy = 0, xz = 0, xw = 0,
-                    yx = 0, yy = 0, yz = 0, yw = 0,
-                    zx = 0, zy = 0, zz = 0, zw = 0,
-                    wx = 0, wy = 0, wz = 0, ww = 0;
-
-        public float this[int x, int y]
-        {
-            get
-            {
-                switch (x, y)
-                {
-                    case (0, 0):
-                        return xx;
-                    case (0, 1):
-                        return xy;
-                    case (0, 2):
-                        return xz;
-                    case (0, 3):
-                        return xw;
-                    case (1, 0):
-                        return yx;
-                    case (1, 1):
-                        return yy;
-                    case (1, 2):
-                        return yz;
-                    case (1, 3):
-                        return yw;
-                    case (2, 0):
-                        return zx;
-                    case (2, 1):
-                        return zy;
-                    case (2, 2):
-                        return zz;
-                    case (2, 3):
-                        return zw;
-                    case (3, 0):
-                        return wx;
-                    case (3, 1):
-                        return wy;
-                    case (3, 2):
-                        return wz;
-                    case (3, 3):
-                        return ww;
-                    default:
-                        throw new IndexOutOfRangeException();
-                }
-            }
-            set
-            {
-                switch (x, y)
-                {
-                    case (0, 0):
-                        xx = value;
-                        return;
-                    case (0, 1):
-                        xy = value;
-                        return;
-                    case (0, 2):
-                        xz = value;
-                        return;
-                    case (0, 3):
-                        xw = value;
-                        return;
-                    case (1, 0):
-                        yx = value;
-                        return;
-                    case (1, 1):
-                        yy = value;
-                        return;
-                    case (1, 2):
-                        yz = value;
-                        return;
-                    case (1, 3):
-                        yw = value;
-                        return;
-                    case (2, 0):
-                        zx = value;
-                        return;
-                    case (2, 1):
-                        zy = value;
-                        return;
-                    case (2, 2):
-                        zz = value;
-                        return;
-                    case (2, 3):
-                        zw = value;
-                        return;
-                    case (3, 0):
-                        wx = value;
-                        return;
-                    case (3, 1):
-                        wy = value;
-                        return;
-                    case (3, 2):
-                        wz = value;
-                        return;
-                    case (3, 3):
-                        ww = value;
-                        return;
-                    default:
-                        throw new IndexOutOfRangeException();
-                }
-            }
-        }
-
-        public Matrix4x4()
-        {
-        }
-    }
-
-    [StructLayout(LayoutKind.Explicit, Size = 88)]
-    struct CameraData
-    {
-        [FieldOffset(0)] public Vector3 worldSpaceCameraPosition;
-        [FieldOffset(12)] public float width;
-        [FieldOffset(16)] public float height;
-        [FieldOffset(20)] public float near;
-        [FieldOffset(24)] public Matrix4x4 cameraToWorld;
-    }*/
-
     [StructLayout(LayoutKind.Explicit, Size = 8)]
     struct SizeData
     {
@@ -187,18 +65,18 @@ public partial class ComputeTest : Sprite2D
 
     // Buffers to update
     private byte[] cameraDataBytes;
-    private float[] /*CameraData*/ cameraData;
+    private float[] cameraData;
     private Rid cameraDataBuffer;
-
     private byte[] directionalLightDataBytes;
     private DirectionalLightData directionalLightData;
 
     private Rid directionalLightDataBuffer;
-
     private Rid outputTexture;
+    private Rid lastFrameTexture;
     private Image img;
-
     private ImageTexture imageTexture;
+    private Rid uniformSet;
+    private Rid pipeline;
 
     private bool _initialized = false;
 
@@ -238,17 +116,9 @@ public partial class ComputeTest : Sprite2D
         UpdateCameraData();
         //cameraData = new CameraData();
 
-        /*GD.Print("In: ");
-        PrintArray(GetBytes(cameraData.viewParams), 0, 12, 8);*/
-
         //cameraDataBytes = GetBytes(cameraData);
         Buffer.BlockCopy(cameraData, 0, cameraDataBytes, 0, cameraData.Length * sizeof(float));
         cameraDataBuffer = rd.StorageBufferCreate((uint)cameraDataBytes.Length, cameraDataBytes);
-        /*GD.Print("Out: ");
-        PrintArray(rd.BufferGetData(cameraDataBuffer, 12, 12), 0, 12, 8);
-
-        GD.Print("Test: ");
-        PrintArray(GetBytes(new Vector3(0, 0, 1)), 0, 12, 8);*/
 
         // Light
         directionalLightData = new DirectionalLightData(); // Position = 3, Strength = 1 
@@ -297,12 +167,21 @@ public partial class ComputeTest : Sprite2D
             Binding = 3
         };
 
+        lastFrameTexture = rd.TextureCreate(fmt, view, outputData);
+        var lastFrameTextureUniform = new RDUniform()
+        {
+            UniformType = RenderingDevice.UniformType.Image,
+            Binding = 4
+        };
+
+
         outputTextureUniform.AddId(outputTexture);
+        lastFrameTextureUniform.AddId(lastFrameTexture);
         uniformSize.AddId(sizeBuffer);
         uniformCamera.AddId(cameraDataBuffer);
         uniformDirectionalLight.AddId(directionalLightDataBuffer);
 
-        uniformSet = rd.UniformSetCreate(new Array<RDUniform> { outputTextureUniform, uniformSize, uniformCamera, uniformDirectionalLight }, shader, 0);
+        uniformSet = rd.UniformSetCreate(new Array<RDUniform> { outputTextureUniform, lastFrameTextureUniform, uniformSize, uniformCamera, uniformDirectionalLight }, shader, 0);
 
         // Create a compute pipeline
         pipeline = rd.ComputePipelineCreate(shader);
@@ -319,7 +198,6 @@ public partial class ComputeTest : Sprite2D
 
         // PrintBuffer(cameraDataBytes);
 
-        //cameraDataBytes = GetBytes(cameraData);
         Buffer.BlockCopy(cameraData, 0, cameraDataBytes, 0, cameraData.Length * sizeof(float));
         rd.BufferUpdate(cameraDataBuffer, 0, (uint)cameraDataBytes.Length, cameraDataBytes);
 
@@ -329,6 +207,12 @@ public partial class ComputeTest : Sprite2D
 
         directionalLightDataBytes = GetBytes(directionalLightData);
         rd.BufferUpdate(directionalLightDataBuffer, 0, (uint)directionalLightDataBytes.Length, directionalLightDataBytes);
+
+        if (currentFrame != 0)
+        {
+            var lastByteData = rd.TextureGetData(outputTexture, 0);
+            rd.TextureUpdate(lastFrameTexture, 0, lastByteData);
+        }
 
         // Submit to GPU and wait for sync
         var computeList = rd.ComputeListBegin();
@@ -437,8 +321,6 @@ public partial class ComputeTest : Sprite2D
         {
             Marshal.FreeHGlobal(ptr);
         }
-        // GD.Print("------------------------------------");
-        // PrintArray(arr, 0, arr.Length, 8);
         return arr;
     }
 
@@ -469,10 +351,8 @@ public partial class ComputeTest : Sprite2D
         }
     }
 
-    double interval = 1f / 60f;
+    double interval = 1f / 300f;
     double t = 0f;
-    private Rid uniformSet;
-    private Rid pipeline;
 
     public override void _Process(double delta)
     {
