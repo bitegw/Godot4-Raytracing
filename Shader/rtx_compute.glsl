@@ -4,11 +4,11 @@
 // #include "res://Shader/rtx_utilities.gdshaderinc"
 
 const uint MAX_BOUNCES = 30u;
-const uint NUM_RAYS = 100u;
+const uint NUM_RAYS = 200u;
 const float FAR = 4000.0f;
 const float RAY_POS_NORMAL_NUDGE = 0.01f;
 const float TWO_PI = 6.28318530718f;
-// const float RECENT_FRAME_BIAS = 0.1f;
+const float RECENT_FRAME_BIAS = 0.05f;
 
 struct Ray {
     vec3 origin;
@@ -77,6 +77,37 @@ bool RaySphere(in Ray ray, in vec3 sphereCentre, in float sphereRadius, inout Hi
     return false;
 }
 
+bool RayTriangle(in Ray ray, vec3 a, vec3 b, vec3 c, vec3 normA, vec3 normB, vec3 normC, inout HitInfo hitInfo)
+{
+	vec3 edgeAB = b - a;
+    vec3 edgeAC = c - a;
+    vec3 normal = cross(edgeAB, edgeAC);
+
+    vec3 ao = ray.origin - a;
+    vec3 dao = cross(ao, ray.dir);
+
+    float determinant = -dot(ray.dir, normal);
+    float invDet = 1 / determinant;
+
+    float dist = dot(ao, normal) * invDet;
+    float u = dot(edgeAC, dao) * invDet;
+    float v = -dot(edgeAB, dao) * invDet;
+    float w = 1 - u - v;
+
+    bool didHit = determinant >= 1E-6 && dist >= 0 && u >= 0 && v >= 0 && w >= 0;
+    
+    if (didHit && dist >= 0.0f && dist < hitInfo.dist) {
+        hitInfo.didHit = didHit;
+        hitInfo.point = ray.origin + ray.dir * dist;
+        //hitInfo.normal = normalize(normA * w + normB * u + normC * v); 
+        hitInfo.normal = normal; // Use calculated normal for now
+        hitInfo.dist = dist;
+        return true;
+    } else {
+        return false;
+    }
+}
+
 uint WangHash(inout uint seed)
 {
     seed = uint(seed ^ uint(61)) ^ uint(seed >> uint(16));
@@ -127,6 +158,23 @@ void TraceScene(in Ray ray, inout HitInfo hitInfo) {
 		hitInfo.albedo = vec3(0.2f, 0.9f, 0.1f);
         hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
 	}
+
+    vec3 a = vec3(0,0,0);
+    vec3 b = vec3(10,0,0);
+    vec3 c = vec3(10,0,10);
+    vec3 d = vec3(0,0,10);
+
+    vec3 norm = vec3(0,1,0);
+
+    if(RayTriangle(ray, a, d, c, norm, norm, norm, hitInfo)) {
+        hitInfo.albedo = vec3(1.0f, 0.5f, 0.5f);
+        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
+    }
+
+    if(RayTriangle(ray, a, c, b, norm, norm, norm, hitInfo)) {
+        hitInfo.albedo = vec3(0.5f, 0.5f, 1.0f);
+        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
+    }
 }
 
 vec3 GetColorForRay(in Ray ray, inout uint rngState)
@@ -235,6 +283,6 @@ void main() {
     vec4 lastFrameColor = imageLoad(LAST_TEXTURE, texel);
     imageStore(LAST_TEXTURE, texel, color);
 
-    color = mix(lastFrameColor, color, 1.0f / (camera_data.frame + 1.0f));
+    color = mix(lastFrameColor, color, RECENT_FRAME_BIAS + 1.0f / (camera_data.frame + 1.0f));
     imageStore(OUTPUT_TEXTURE, texel, color);
 }
