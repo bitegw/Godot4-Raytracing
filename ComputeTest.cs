@@ -208,11 +208,11 @@ public partial class ComputeTest : Sprite2D
         directionalLightDataBytes = GetBytes(directionalLightData);
         rd.BufferUpdate(directionalLightDataBuffer, 0, (uint)directionalLightDataBytes.Length, directionalLightDataBytes);
 
-        if (currentFrame != 0)
-        {
-            var lastByteData = rd.TextureGetData(outputTexture, 0);
-            rd.TextureUpdate(lastFrameTexture, 0, lastByteData);
-        }
+        // if (currentFrame != 0)
+        // {
+        //     var lastByteData = rd.TextureGetData(outputTexture, 0);
+        //     rd.TextureUpdate(lastFrameTexture, 0, lastByteData);
+        // }
 
         // Submit to GPU and wait for sync
         var computeList = rd.ComputeListBegin();
@@ -351,7 +351,7 @@ public partial class ComputeTest : Sprite2D
         }
     }
 
-    double interval = 1f / 300f;
+    double interval = 1f / 60f;
     double t = 0f;
 
     public override void _Process(double delta)

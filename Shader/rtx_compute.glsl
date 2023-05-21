@@ -3,17 +3,23 @@
 
 // #include "res://Shader/rtx_utilities.gdshaderinc"
 
-const uint MAX_BOUNCES = 30u;
-const uint NUM_RAYS = 200u;
+const uint MAX_BOUNCES = 10u;
+const uint NUM_RAYS = 5u;
 const float FAR = 4000.0f;
 const float RAY_POS_NORMAL_NUDGE = 0.01f;
 const float TWO_PI = 6.28318530718f;
-const float RECENT_FRAME_BIAS = 0.05f;
+const float RECENT_FRAME_BIAS = 1.0f;
 
 struct Ray {
     vec3 origin;
     vec3 dir;
     vec3 energy;
+};
+
+struct Material {
+	vec3 albedo;
+	vec3 emissive;
+    float smoothness;
 };
 
 struct HitInfo {
@@ -22,13 +28,7 @@ struct HitInfo {
 	float dist;
 	vec3 point;
 	vec3 normal;
-	vec3 albedo;
-	vec3 emissive;
-};
-
-struct Material {
-	vec3 albedo;
-	vec3 emissive;
+	Material material;
 };
 
 vec3 GetSkyGradient(Ray ray) {
@@ -99,8 +99,7 @@ bool RayTriangle(in Ray ray, vec3 a, vec3 b, vec3 c, vec3 normA, vec3 normB, vec
     if (didHit && dist >= 0.0f && dist < hitInfo.dist) {
         hitInfo.didHit = didHit;
         hitInfo.point = ray.origin + ray.dir * dist;
-        //hitInfo.normal = normalize(normA * w + normB * u + normC * v); 
-        hitInfo.normal = normal; // Use calculated normal for now
+        hitInfo.normal = -normalize(normA * w + normB * u + normC * v);
         hitInfo.dist = dist;
         return true;
     } else {
@@ -134,29 +133,46 @@ vec3 RandomUnitVector(inout uint state)
 }
 
 void TraceScene(in Ray ray, inout HitInfo hitInfo) {
+    Material mat;
+
 	if(RaySphere(ray, vec3(0,0,-5), 1, hitInfo)) {
-		hitInfo.albedo = vec3(0.8f, 0.2f, 0.2f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
+		mat.albedo = vec3(0.8f, 0.2f, 0.2f);
+        mat.emissive = vec3(0.0f, 0.0f, 0.0f); 
+        mat.smoothness = 1.0f;
+
+        hitInfo.material = mat;
 	}
 
 	if(RaySphere(ray, vec3(3,0,-5), 1, hitInfo)) {
-		hitInfo.albedo = vec3(0.2f, 0.8f, 0.2f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
+		mat.albedo = vec3(0.2f, 0.8f, 0.2f);
+        mat.emissive = vec3(0.0f, 0.0f, 0.0f); 
+        mat.smoothness = 0.66f;
+
+        hitInfo.material = mat;  
 	}
 
 	if(RaySphere(ray, vec3(-3,0,-5), 1, hitInfo)) {
-		hitInfo.albedo = vec3(0.5f, 0.5f, 0.8f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
+		mat.albedo = vec3(0.5f, 0.5f, 0.8f);
+        mat.emissive = vec3(0.0f, 0.0f, 0.0f);
+        mat.smoothness = 1.0f;
+
+        hitInfo.material = mat;
 	}
 
 	if(RaySphere(ray, vec3(0,3,-3), 1.5f, hitInfo)) {
-		hitInfo.albedo = vec3(1.0f, 1.0f, 1.0f);
-        hitInfo.emissive = vec3(1.0f, 1.0f, 1.0f);  
+		mat.albedo = vec3(1.0f, 1.0f, 1.0f);
+        mat.emissive = vec3(1.0f, 1.0f, 1.0f);
+        mat.smoothness = 0.0f;
+
+        hitInfo.material = mat;
 	}
 
     if(RaySphere(ray, vec3(0,-21, 0), 20, hitInfo)) {
-		hitInfo.albedo = vec3(0.2f, 0.9f, 0.1f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
+		mat.albedo = vec3(0.2f, 0.9f, 0.1f);
+        mat.emissive = vec3(0.0f, 0.0f, 0.0f);
+        mat.smoothness = 0.2f;
+
+        hitInfo.material = mat;
 	}
 
     vec3 a = vec3(0,0,0);
@@ -167,13 +183,44 @@ void TraceScene(in Ray ray, inout HitInfo hitInfo) {
     vec3 norm = vec3(0,1,0);
 
     if(RayTriangle(ray, a, d, c, norm, norm, norm, hitInfo)) {
-        hitInfo.albedo = vec3(1.0f, 0.5f, 0.5f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
+        mat.albedo = vec3(1.0f, 0.5f, 0.5f);
+        mat.emissive = vec3(0.0f, 0.0f, 0.0f);
+        mat.smoothness = 0.9f;
+
+        hitInfo.material = mat;
     }
 
     if(RayTriangle(ray, a, c, b, norm, norm, norm, hitInfo)) {
-        hitInfo.albedo = vec3(0.5f, 0.5f, 1.0f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
+        mat.albedo = vec3(0.5f, 0.5f, 1.0f);
+        mat.emissive = vec3(0.0f, 0.0f, 0.0f);
+        mat.smoothness = 1.0f;
+
+        hitInfo.material = mat;
+    }
+
+    float offset = 5;
+
+    a = vec3(0, offset,0);
+    b = vec3(5,offset,0);
+    c = vec3(5,offset,5);
+    d = vec3(0,offset,5);
+
+    norm *= -1;
+
+    if(RayTriangle(ray, c, d, a, norm, norm, norm, hitInfo)) {
+        mat.albedo = vec3(1.0f, 0.5f, 0.5f);
+        mat.emissive = vec3(1.0f);
+        mat.smoothness = 0.0f;
+
+        hitInfo.material = mat;
+    }
+
+    if(RayTriangle(ray, b, c, a, norm, norm, norm, hitInfo)) {
+        mat.albedo = vec3(0.5f, 0.5f, 1.0f);
+        mat.emissive = vec3(1.0f);
+        mat.smoothness = 0.0f;
+
+        hitInfo.material = mat;
     }
 }
 
@@ -187,8 +234,6 @@ vec3 GetColorForRay(in Ray ray, inout uint rngState)
 	nextRay.dir = ray.dir;
 
     vec3 test;
-
-    bool directHit = false;
      
     for(uint rayIndex = 0u; rayIndex <= NUM_RAYS; ++rayIndex) {
         for (uint bounceIndex = 0u; bounceIndex <= MAX_BOUNCES; ++bounceIndex)
@@ -197,10 +242,6 @@ vec3 GetColorForRay(in Ray ray, inout uint rngState)
             HitInfo hitInfo;
             hitInfo.dist = FAR;
             TraceScene(nextRay, hitInfo);
-
-            if(hitInfo.didHit && bounceIndex == 0u) {
-                directHit = true;
-            }
             
             // if the ray missed, we are done
             if (hitInfo.dist == FAR) {
@@ -214,13 +255,18 @@ vec3 GetColorForRay(in Ray ray, inout uint rngState)
             nextRay.origin = (nextRay.origin + nextRay.dir * hitInfo.dist) + hitInfo.normal * RAY_POS_NORMAL_NUDGE;
                 
             // calculate new ray direction, in a cosine weighted hemisphere oriented at normal
-            nextRay.dir = normalize(hitInfo.normal + RandomUnitVector(rngState));        
+            vec3 diffuseDir = normalize(hitInfo.normal + RandomUnitVector(rngState));
+            vec3 specularDir = reflect(ray.dir, hitInfo.normal);
+
+            Material mat = hitInfo.material;
+
+            nextRay.dir = mix(diffuseDir, specularDir, mat.smoothness);
                 
             // add in emissive lighting
-            ret += hitInfo.emissive * throughput;
+            ret += mat.emissive * throughput;
                 
             // update the colorMultiplier
-            throughput *= hitInfo.albedo;      
+            throughput *= mat.albedo;
         }
     }
   
@@ -281,8 +327,9 @@ void main() {
 
     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
     vec4 lastFrameColor = imageLoad(LAST_TEXTURE, texel);
-    imageStore(LAST_TEXTURE, texel, color);
 
-    color = mix(lastFrameColor, color, RECENT_FRAME_BIAS + 1.0f / (camera_data.frame + 1.0f));
+    //color = mix(lastFrameColor, color, RECENT_FRAME_BIAS + 1.0f / (camera_data.frame + 1.0f));
+    //color = mix(lastFrameColor, color, 0.5f);
+    //imageStore(LAST_TEXTURE, texel, color);
     imageStore(OUTPUT_TEXTURE, texel, color);
 }
