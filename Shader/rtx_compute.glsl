@@ -3,12 +3,16 @@
 
 // #include "res://Shader/rtx_utilities.gdshaderinc"
 
-const uint MAX_BOUNCES = 10u;
-const uint NUM_RAYS = 5u;
+layout(binding = 5, std430) restrict buffer SettingsBuffer {
+    bool temporalAccumulation;
+    uint maxBounces;
+    uint numRays;
+    float recentFrameBias;
+} settings;
+
 const float FAR = 4000.0f;
 const float RAY_POS_NORMAL_NUDGE = 0.01f;
 const float TWO_PI = 6.28318530718f;
-const float RECENT_FRAME_BIAS = 1.0f;
 
 struct Ray {
     vec3 origin;
@@ -235,8 +239,8 @@ vec3 GetColorForRay(in Ray ray, inout uint rngState)
 
     vec3 test;
      
-    for(uint rayIndex = 0u; rayIndex <= NUM_RAYS; ++rayIndex) {
-        for (uint bounceIndex = 0u; bounceIndex <= MAX_BOUNCES; ++bounceIndex)
+    for(uint rayIndex = 0u; rayIndex <= settings.numRays; ++rayIndex) {
+        for (uint bounceIndex = 0u; bounceIndex <= settings.maxBounces; ++bounceIndex)
         {
             // shoot a ray out into the world
             HitInfo hitInfo;
@@ -245,8 +249,7 @@ vec3 GetColorForRay(in Ray ray, inout uint rngState)
             
             // if the ray missed, we are done
             if (hitInfo.dist == FAR) {
-                //if(!directHit) 
-                vec3 skyColor = GetSkyGradient(ray) / NUM_RAYS;
+                vec3 skyColor = GetSkyGradient(ray) / settings.numRays;
                 ret += skyColor * throughput;
                 break;
             }
@@ -323,13 +326,15 @@ void main() {
     Ray ray = CreateRay(origin, dir);
 
     uint rngState = uint(uint(gl_GlobalInvocationID.x) * uint(1973) + uint(gl_GlobalInvocationID.y) * uint(9277) + camera_data.frame * uint(26699)) | uint(1);
+
     vec4 color = vec4(GetColorForRay(ray, rngState), 1.0f);
 
     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
-    vec4 lastFrameColor = imageLoad(LAST_TEXTURE, texel);
+    vec4 lastFrameColor = imageLoad(OUTPUT_TEXTURE, texel);
 
-    //color = mix(lastFrameColor, color, RECENT_FRAME_BIAS + 1.0f / (camera_data.frame + 1.0f));
-    //color = mix(lastFrameColor, color, 0.5f);
-    //imageStore(LAST_TEXTURE, texel, color);
+    if(settings.temporalAccumulation) {
+        color = mix(lastFrameColor, color, settings.recentFrameBias + 1.0f / (camera_data.frame + 1.0f));
+    }
+
     imageStore(OUTPUT_TEXTURE, texel, color);
 }

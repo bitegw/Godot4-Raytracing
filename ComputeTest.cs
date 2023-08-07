@@ -63,7 +63,19 @@ public partial class ComputeTest : Sprite2D
         [FieldOffset(4)] public int height;
     }
 
+    [StructLayout(LayoutKind.Explicit, Size = 16)]
+    public struct SettingsData
+    {
+        [FieldOffset(0)] public bool temporalAccumulation;
+        [FieldOffset(4)] public uint maxBounces;
+        [FieldOffset(8)] public uint numRays;
+        [FieldOffset(12)] public float recentFrameBias;
+    }
+
     // Buffers to update
+    public SettingsData settings;
+    private Rid settingsBuffer;
+
     private byte[] cameraDataBytes;
     private float[] cameraData;
     private Rid cameraDataBuffer;
@@ -109,6 +121,16 @@ public partial class ComputeTest : Sprite2D
         var sizeBytes = GetBytes(size);
 
         var sizeBuffer = rd.StorageBufferCreate((uint)sizeBytes.Length, sizeBytes);
+
+        // Settings
+        settings = new SettingsData();
+        settings.temporalAccumulation = true;
+        settings.numRays = 10u;
+        settings.maxBounces = 10u;
+        settings.recentFrameBias = 0.05f;
+        var settingsBytes = GetBytes(settings);
+
+        settingsBuffer = rd.StorageBufferCreate((uint)settingsBytes.Length, settingsBytes);
 
         // Camera
         cameraData = new float[16 + 3 + 3 + 1]; // mat4 vec3 vec3 uint
@@ -173,7 +195,12 @@ public partial class ComputeTest : Sprite2D
             UniformType = RenderingDevice.UniformType.Image,
             Binding = 4
         };
-
+        
+        var uniformSettings = new RDUniform
+        {
+            UniformType = RenderingDevice.UniformType.StorageBuffer,
+            Binding = 5
+        };
 
         outputTextureUniform.AddId(outputTexture);
         lastFrameTextureUniform.AddId(lastFrameTexture);
@@ -181,7 +208,9 @@ public partial class ComputeTest : Sprite2D
         uniformCamera.AddId(cameraDataBuffer);
         uniformDirectionalLight.AddId(directionalLightDataBuffer);
 
-        uniformSet = rd.UniformSetCreate(new Array<RDUniform> { outputTextureUniform, lastFrameTextureUniform, uniformSize, uniformCamera, uniformDirectionalLight }, shader, 0);
+        uniformSettings.AddId(settingsBuffer);
+
+        uniformSet = rd.UniformSetCreate(new Array<RDUniform> { outputTextureUniform, lastFrameTextureUniform, uniformSize, uniformCamera, uniformDirectionalLight, uniformSettings }, shader, 0);
 
         // Create a compute pipeline
         pipeline = rd.ComputePipelineCreate(shader);
@@ -245,8 +274,15 @@ public partial class ComputeTest : Sprite2D
         currentFrame++;
     }
 
+    public void UpdateSettings() {
+        var settingsBytes = GetBytes(settings);
+        rd.BufferUpdate(settingsBuffer, 0, (uint)settingsBytes.Length, settingsBytes);
+    }
+
     void UpdateCameraData()
     {
+        float[] lastFrameCameraData = (float[])cameraData.Clone();
+
         var camT = Camera.GlobalTransform;
 
         cameraData[0] = camT.Basis.X.X;
@@ -279,6 +315,11 @@ public partial class ComputeTest : Sprite2D
         cameraData[19] = planeWidth;
         cameraData[20] = planeHeight;
         cameraData[21] = Camera.Near;
+
+        for(int i=0; i<12; i++)
+        if(cameraData[i] != lastFrameCameraData[i]) {
+            currentFrame = 0;
+        }
 
         cameraData[22] = currentFrame;
     }
@@ -360,7 +401,6 @@ public partial class ComputeTest : Sprite2D
         {
             if (t >= interval)
             {
-                // GD.Print("Rendered");
                 Compute();
                 t = 0;
             }
