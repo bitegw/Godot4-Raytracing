@@ -10,35 +10,28 @@ public partial class SettingsMenu : Control
     [Export] private Slider slider;
 
 	[Export] private ComputeTest computeTest;
+	[Export] private OptionButton resolutionOptions;
 	[Export] private SpinBox numRays;
 	[Export] private SpinBox maxBounces;
 	[Export] private Slider recentFrameBias;
 	[Export] private CheckButton temporalAccumulationCheck;
+	[Export] private CheckButton checkerboardCheck;
+
+	public Vector2I[] resolutions = {new Vector2I(1920, 1080), new Vector2I(1600, 900), new Vector2I(1280, 720), new Vector2I(640, 360)};
+	public float[] scales = {2, 1.5f, 1, 0.5f};
 
     public override void _Ready()
     {
-        if (instance != null && instance != this)
-        {
-            // Destroy this duplicate instance
-            QueueFree();
-            return;
-        }
-        instance = this;
+        isMenuVisible = Visible;
 
-		if (shaderMaterial == null)
-        {
-            GD.PrintErr("SettingsMenu: ShaderMaterial not assigned in the editor!");
-            return;
-        }
+		temporalAccumulationCheck.ButtonPressed = computeTest.settings.temporalAccumulation;
+		checkerboardCheck.ButtonPressed = computeTest.settings.checkerboard;
 
-        if (slider == null)
-        {
-            GD.PrintErr("SettingsMenu: Slider not assigned in the editor!");
-            return;
-        }
+		numRays.Value = computeTest.settings.numRays;
+		maxBounces.Value = computeTest.settings.maxBounces;
 
 		slider.ValueChanged += (value) => {
-			OnSliderValueChanged(value);
+			shaderMaterial.SetShaderParameter("t", value);
 		};
 
 		temporalAccumulationCheck.Toggled += (value) => {
@@ -62,6 +55,19 @@ public partial class SettingsMenu : Control
 				computeTest.UpdateSettings();
 			}
 		};
+
+		checkerboardCheck.Toggled += (value) => {
+			computeTest.settings.checkerboard = value;
+			computeTest.UpdateSettings();
+		};
+
+		resolutionOptions.ItemSelected += (index) => {
+			if(index >= resolutions.Length || index < 0) return;
+
+			GetWindow().Size = resolutions[index];
+			this.Scale = new Vector2(scales[index], scales[index]);
+			computeTest.UpdateResolution(resolutions[index]);
+		};
     }
 
     public override void _Input(InputEvent @event)
@@ -72,15 +78,5 @@ public partial class SettingsMenu : Control
             isMenuVisible = !isMenuVisible;
             Visible = isMenuVisible;
         }
-    }
-
-	public void OnSliderValueChanged(double value)
-    {
-        // Update the T parameter of the shader based on the Slider value
-        if (shaderMaterial != null)
-        {
-            // Map the slider's value to the range 0.0 to 1.0 (adjust as needed)
-            shaderMaterial.SetShaderParameter("t", value);
-		}
     }
 }
