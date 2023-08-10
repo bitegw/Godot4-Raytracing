@@ -1,7 +1,7 @@
 # Godot4-Raytracing
 Implementation of ray-tracing in Godot engine, via compute shaders. Focus on realtime performance and optimization.
 
-![Example render](./Screenshots/Screenshot 2023-08-10_Cornell.png)
+![Example render](./Screenshots/Screenshot%202023-08-10_Cornell.png)
 
 ## Instructions:
 
