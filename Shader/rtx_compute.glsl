@@ -3,12 +3,157 @@
 
 // #include "res://Shader/rtx_utilities.gdshaderinc"
 
-const uint MAX_BOUNCES = 30u;
-const uint NUM_RAYS = 200u;
+struct Light {
+    float positionX;
+    float positionY;
+    float positionZ;
+    float colorR;
+    float colorG;
+    float colorB;
+    float intensity;
+    bool isDirectionalLight;
+    float directionX;
+    float directionY;
+    float directionZ;
+};
+
+struct Surface {
+    float positionX;
+    float positionY;
+    float positionZ;
+    float rotationX;
+    float rotationY;
+    float rotationZ;
+    float scaleX;
+    float scaleY;
+    float scaleZ;
+    float boxMinX;
+    float boxMinY;
+    float boxMinZ;
+    float boxMaxX;
+    float boxMaxY;
+    float boxMaxZ;
+    int materialID;
+    int indexStart;
+    int indexEnd;
+};
+
+struct Sphere {
+    float positionX;
+    float positionY;
+    float positionZ;
+    // float rotationX;
+    // float rotationY;
+    // float rotationZ;
+    float scaleX;
+    float scaleY;
+    float scaleZ;
+    float boxMinX;
+    float boxMinY;
+    float boxMinZ;
+    float boxMaxX;
+    float boxMaxY;
+    float boxMaxZ;
+    int materialID;
+    float radius;
+};
+
+
+struct Material {
+	float albedoR;
+	float albedoG;
+	float albedoB;
+    int textureID;
+    float specularity;
+	float emissiveR;
+	float emissiveG;
+	float emissiveB;
+    int emissiveTextureID;
+    float roughness;
+    int roughnessTextureID;
+    float alpha;
+    int alphaTextureID;
+};
+
+// Invocations in the (x, y, z) dimension
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(binding = 0, rgba32f) uniform image2D OUTPUT_TEXTURE;
+
+layout(binding = 1, std430) restrict buffer SettingsBuffer {
+    int width;
+    int height;
+    uint numRays;
+    uint maxBounces;
+    bool temporalAccumulation;
+    float recentFrameBias;
+    bool checkerboard;
+} settingsBuffer;
+
+layout(binding = 2, std430) restrict buffer CameraBuffer {
+    mat4 cameraBufferToWorld;
+    vec3 worldSpaceCameraPosition;
+    float width;
+    float height;
+    float near;
+    float frame;
+} cameraBuffer;
+
+layout(binding = 3, std430) restrict buffer LightBuffer {
+    Light lights[];
+} lightBuffer;
+
+// Mesh buffer
+layout(binding = 4, std430) readonly buffer SurfaceBuffer {
+    Surface surfaces[];
+} surfaceBuffer;
+
+// Vertex buffer
+layout(binding = 5, std430) readonly buffer VertexBuffer {
+    float vertices[]; // Or your vertex type
+} vertexBuffer;
+
+layout(binding = 6, std430) readonly buffer NormalBuffer {
+    float normals[]; // Or your vertex type
+} normalBuffer;
+
+layout(binding = 7, std430) readonly buffer UVBuffer {
+    vec2 uvs[]; // Or your vertex type
+} uvBuffer;
+
+// Index buffer
+layout(binding = 8, std430) readonly buffer IndexBuffer {
+    int indices[];
+} indexBuffer;
+
+// Material buffer
+layout(binding = 9, std430) readonly buffer MaterialBuffer {
+    Material materials[];
+} materialBuffer;
+
+// Spheres buffer
+layout(binding = 10, std430) readonly buffer SphereBuffer {
+    Sphere spheres[];
+} sphereBuffer;
+
+// // Albedo texture array
+// layout(binding = 8) uniform texture2DArray albedoTextures;
+
+// // Roughness texture array
+// layout(binding = 9) uniform texture2DArray roughnessTextures;
+
+// // Emissive texture array
+// layout(binding = 10) uniform texture2DArray emissiveTextures;
+
+// // Alpha texture array
+// layout(binding = 11) uniform texture2DArray alphaTextures;
+
+// layout(binding = 12, rgba32f) uniform image2D ENVIRONMENT;
+
 const float FAR = 4000.0f;
+const float SKY_MULT = 0.75f;
 const float RAY_POS_NORMAL_NUDGE = 0.01f;
 const float TWO_PI = 6.28318530718f;
-const float RECENT_FRAME_BIAS = 0.05f;
 
 struct Ray {
     vec3 origin;
@@ -22,18 +167,18 @@ struct HitInfo {
 	float dist;
 	vec3 point;
 	vec3 normal;
-	vec3 albedo;
-	vec3 emissive;
-};
-
-struct Material {
-	vec3 albedo;
-	vec3 emissive;
+	Material material;
 };
 
 vec3 GetSkyGradient(Ray ray) {
 	float t = 0.5f * (ray.dir.y + 1.0f);
-	return (1.0f - t) * vec3(1.0) + t * vec3(0.15f, 0.15f, 0.45f);
+    vec3 a = vec3(0.239, 0.20, 0.153);
+    vec3 b = vec3(1, 1, 1);
+    vec3 c = vec3(0.5882, 0.7137, 0.8745);
+	vec3 ab = mix(a, b, smoothstep(0, 0.15, t - 0.4));
+    vec3 bc = mix(b, c, smoothstep(0.55, 1, t + 0.2));
+    
+    return mix(ab, bc, smoothstep(0.45, 0.55, t));
 }
 
 Ray CreateRay(vec3 origin, vec3 dir) {
@@ -70,8 +215,7 @@ bool RaySphere(in Ray ray, in vec3 sphereCentre, in float sphereRadius, inout Hi
             return true;
 		}
 
-		/*hitInfo.frontFace = dot(ray.dir, hitInfo.normal) <= 0.0f;
-        if(hitInfo.frontFace) hitInfo.normal *= -1.0f;*/
+		hitInfo.frontFace = dot(ray.dir, hitInfo.normal) <= 0.0f;
 	}
 
     return false;
@@ -79,33 +223,67 @@ bool RaySphere(in Ray ray, in vec3 sphereCentre, in float sphereRadius, inout Hi
 
 bool RayTriangle(in Ray ray, vec3 a, vec3 b, vec3 c, vec3 normA, vec3 normB, vec3 normC, inout HitInfo hitInfo)
 {
-	vec3 edgeAB = b - a;
-    vec3 edgeAC = c - a;
-    vec3 normal = cross(edgeAB, edgeAC);
-
-    vec3 ao = ray.origin - a;
-    vec3 dao = cross(ao, ray.dir);
-
-    float determinant = -dot(ray.dir, normal);
-    float invDet = 1 / determinant;
-
-    float dist = dot(ao, normal) * invDet;
-    float u = dot(edgeAC, dao) * invDet;
-    float v = -dot(edgeAB, dao) * invDet;
-    float w = 1 - u - v;
-
-    bool didHit = determinant >= 1E-6 && dist >= 0 && u >= 0 && v >= 0 && w >= 0;
+    vec3 edge1 = b - a;
+    vec3 edge2 = c - a;
+    vec3 h = cross(ray.dir, edge2);
+    float a_dot_edge1 = dot(edge1, h);
     
-    if (didHit && dist >= 0.0f && dist < hitInfo.dist) {
-        hitInfo.didHit = didHit;
-        hitInfo.point = ray.origin + ray.dir * dist;
-        //hitInfo.normal = normalize(normA * w + normB * u + normC * v); 
-        hitInfo.normal = normal; // Use calculated normal for now
-        hitInfo.dist = dist;
-        return true;
-    } else {
+    if (a_dot_edge1 > -1E-6 && a_dot_edge1 < 1E-6) {
+        return false; // Ray and triangle are parallel
+    }
+    
+    float f = 1.0 / a_dot_edge1;
+    vec3 s = ray.origin - a;
+    float u = f * dot(s, h);
+    
+    if (u < 0.0 || u > 1.0) {
         return false;
     }
+    
+    vec3 q = cross(s, edge1);
+    float v = f * dot(ray.dir, q);
+    
+    if (v < 0.0 || u + v > 1.0) {
+        return false;
+    }
+    
+    float t = f * dot(edge2, q);
+    
+    if (t > 1E-6 && t < hitInfo.dist) {
+        // Calculate the triangle normal based on the barycentric coordinates
+        vec3 normal = normalize(normA * (1.0 - u - v) + normB * u + normC * v);
+        
+        // Calculate the dot product between ray direction and triangle normal
+        float dotProduct = dot(normal, ray.dir);
+
+        hitInfo.normal = normal;
+        
+        // Check if the hit is from the front side of the triangle
+        if (dotProduct > 0.0) {
+            return false; // Return false if hit is from the back side
+        }
+
+        hitInfo.didHit = true;
+        hitInfo.dist = t;
+        hitInfo.point = ray.origin + ray.dir * t;
+        
+        // Set the hitInfo normal to the calculated normal
+        
+        
+        return true;
+    }
+
+    return false;
+}
+
+bool IntersectAABB(vec3 rayOrigin, vec3 rayDir, vec3 boxMin, vec3 boxMax) {
+    vec3 tMin = (boxMin - rayOrigin) / rayDir;
+    vec3 tMax = (boxMax - rayOrigin) / rayDir;
+    vec3 t1 = min(tMin, tMax);
+    vec3 t2 = max(tMin, tMax);
+    float tNear = max(max(t1.x, t1.y), t1.z);
+    float tFar = min(min(t2.x, t2.y), t2.z);
+    return (tNear > tFar);
 }
 
 uint WangHash(inout uint seed)
@@ -133,47 +311,156 @@ vec3 RandomUnitVector(inout uint state)
     return vec3(x, y, z);
 }
 
+mat3 rotationXMatrix(float angle) {
+    float cosAngle = cos(angle);
+    float sinAngle = sin(angle);
+    
+    return mat3(
+        vec3(1.0, 0.0, 0.0),
+        vec3(0.0, cosAngle, -sinAngle),
+        vec3(0.0, sinAngle, cosAngle)
+    );
+}
+
+mat3 rotationYMatrix(float angle) {
+    float cosAngle = cos(angle);
+    float sinAngle = sin(angle);
+    
+    return mat3(
+        vec3(cosAngle, 0.0, sinAngle),
+        vec3(0.0, 1.0, 0.0),
+        vec3(-sinAngle, 0.0, cosAngle)
+    );
+}
+
+mat3 rotationZMatrix(float angle) {
+    float cosAngle = cos(angle);
+    float sinAngle = sin(angle);
+    
+    return mat3(
+        vec3(cosAngle, -sinAngle, 0.0),
+        vec3(sinAngle, cosAngle, 0.0),
+        vec3(0.0, 0.0, 1.0)
+    );
+}
+
 void TraceScene(in Ray ray, inout HitInfo hitInfo) {
-	if(RaySphere(ray, vec3(0,0,-5), 1, hitInfo)) {
-		hitInfo.albedo = vec3(0.8f, 0.2f, 0.2f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
-	}
+    Surface surface;
+    Sphere sphere;
+    Material material;
+    Ray offsetRay;
+    offsetRay.energy = ray.energy;
 
-	if(RaySphere(ray, vec3(3,0,-5), 1, hitInfo)) {
-		hitInfo.albedo = vec3(0.2f, 0.8f, 0.2f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
-	}
+    Material defaultMaterial;
+    defaultMaterial.albedoR = 1;
+    defaultMaterial.albedoG = 0;
+    defaultMaterial.albedoB = 1;
+    defaultMaterial.emissiveR = 1;
+    defaultMaterial.emissiveG = 0;
+    defaultMaterial.emissiveB = 1;
+    defaultMaterial.roughness = 0.5f;
+    defaultMaterial.alpha = 1.0f;
 
-	if(RaySphere(ray, vec3(-3,0,-5), 1, hitInfo)) {
-		hitInfo.albedo = vec3(0.5f, 0.5f, 0.8f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
-	}
+    defaultMaterial.textureID = -1;
+    defaultMaterial.emissiveTextureID = -1;
+    defaultMaterial.roughnessTextureID = -1;
+    defaultMaterial.alphaTextureID = -1;
 
-	if(RaySphere(ray, vec3(0,3,-3), 1.5f, hitInfo)) {
-		hitInfo.albedo = vec3(1.0f, 1.0f, 1.0f);
-        hitInfo.emissive = vec3(1.0f, 1.0f, 1.0f);  
-	}
+    for(int i=0; i < surfaceBuffer.surfaces.length(); i++) {
+        surface = surfaceBuffer.surfaces[i];
+        vec3 position = vec3(surface.positionX, surface.positionY, surface.positionZ);
+        vec3 boxMin = vec3(surface.boxMinX, surface.boxMinY, surface.boxMinZ);
+        vec3 boxMax = vec3(surface.boxMaxX, surface.boxMaxY, surface.boxMaxZ);
 
-    if(RaySphere(ray, vec3(0,-21, 0), 20, hitInfo)) {
-		hitInfo.albedo = vec3(0.2f, 0.9f, 0.1f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
-	}
+        mat3 rotationMatrix = rotationZMatrix(surface.rotationZ) * rotationYMatrix(surface.rotationY) * rotationXMatrix(surface.rotationX);
+        mat3 scaleMatrix = mat3(
+            vec3(surface.scaleX, 0.0, 0.0),
+            vec3(0.0, surface.scaleY, 0.0),
+            vec3(0.0, 0.0, surface.scaleZ)
+        );
+        mat3 transformMatrix =  rotationMatrix * scaleMatrix;
 
-    vec3 a = vec3(0,0,0);
-    vec3 b = vec3(10,0,0);
-    vec3 c = vec3(10,0,10);
-    vec3 d = vec3(0,0,10);
+        if(IntersectAABB(ray.origin - position, ray.dir, transformMatrix * boxMin, transformMatrix * boxMax)) {
+            continue;
+        }
 
-    vec3 norm = vec3(0,1,0);
+        if(surface.materialID >= 0) {
+            material = materialBuffer.materials[surface.materialID];
+        } else {
+            material = defaultMaterial;
+        }
 
-    if(RayTriangle(ray, a, d, c, norm, norm, norm, hitInfo)) {
-        hitInfo.albedo = vec3(1.0f, 0.5f, 0.5f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
+        for(int j=surface.indexStart; j<surface.indexEnd; j+=3) {
+            int offsetAX = indexBuffer.indices[j] * 3;
+            int offsetAY = indexBuffer.indices[j] * 3 + 1;
+            int offsetAZ = indexBuffer.indices[j] * 3 + 2;
+            int offsetBX = indexBuffer.indices[j+1] * 3;
+            int offsetBY = indexBuffer.indices[j+1] * 3 + 1;
+            int offsetBZ = indexBuffer.indices[j+1] * 3 + 2;
+            int offsetCX = indexBuffer.indices[j+2] * 3;
+            int offsetCY = indexBuffer.indices[j+2] * 3 + 1;
+            int offsetCZ = indexBuffer.indices[j+2] * 3 + 2;
+            vec3 a = vec3(vertexBuffer.vertices[offsetAX], vertexBuffer.vertices[offsetAY], vertexBuffer.vertices[offsetAZ]);
+            vec3 b = vec3(vertexBuffer.vertices[offsetBX], vertexBuffer.vertices[offsetBY], vertexBuffer.vertices[offsetBZ]);
+            vec3 c = vec3(vertexBuffer.vertices[offsetCX], vertexBuffer.vertices[offsetCY], vertexBuffer.vertices[offsetCZ]);
+            vec3 nA = vec3(normalBuffer.normals[offsetAX], normalBuffer.normals[offsetAY], normalBuffer.normals[offsetAZ]);
+            vec3 nB = vec3(normalBuffer.normals[offsetBX], normalBuffer.normals[offsetBY], normalBuffer.normals[offsetBZ]);
+            vec3 nC = vec3(normalBuffer.normals[offsetCX], normalBuffer.normals[offsetCY], normalBuffer.normals[offsetCZ]);
+
+            a = (transformMatrix * a) + position;
+            b = (transformMatrix * b) + position;
+            c = (transformMatrix * c) + position;
+            nA = normalize(transformMatrix * nA);
+            nB = normalize(transformMatrix * nB);
+            nC = normalize(transformMatrix * nC);
+
+            if(RayTriangle(ray, 
+                a, 
+                b, 
+                c, 
+                nA, 
+                nB, 
+                nC,
+                hitInfo
+            )) {
+                hitInfo.material = material;
+            }
+        }
     }
 
-    if(RayTriangle(ray, a, c, b, norm, norm, norm, hitInfo)) {
-        hitInfo.albedo = vec3(0.5f, 0.5f, 1.0f);
-        hitInfo.emissive = vec3(0.0f, 0.0f, 0.0f);  
+    for(int i=0; i < sphereBuffer.spheres.length(); i++) {
+        sphere = sphereBuffer.spheres[i];
+        vec3 position = vec3(sphere.positionX, sphere.positionY, sphere.positionZ);
+        vec3 boxMin = vec3(sphere.boxMinX, sphere.boxMinY, sphere.boxMinZ);
+        vec3 boxMax = vec3(sphere.boxMaxX, sphere.boxMaxY, sphere.boxMaxZ);
+
+        if(IntersectAABB(ray.origin - position, ray.dir, boxMin, boxMax)) {
+            continue;
+        }
+
+        if(sphere.materialID >= 0) {
+            material = materialBuffer.materials[sphere.materialID];
+        } else {
+            material = defaultMaterial;
+        }
+
+        if(RaySphere(ray, position, sphere.radius, hitInfo)) {
+            hitInfo.material = material;
+        }
+    }
+}
+
+bool Refract(vec3 incidentDir, vec3 normal, float refractiveIndex, out vec3 refractedDir)
+{
+    float cosThetaIncident = dot(incidentDir, normal);
+    float discriminant = 1.0 - refractiveIndex * refractiveIndex * (1.0 - cosThetaIncident * cosThetaIncident);
+
+    if (discriminant > 0.0) {
+        refractedDir = refractiveIndex * (incidentDir - normal * cosThetaIncident) - normal * sqrt(discriminant);
+        return true;
+    } else {
+        refractedDir = vec3(0.0);
+        return false; // Total internal reflection
     }
 }
 
@@ -187,102 +474,97 @@ vec3 GetColorForRay(in Ray ray, inout uint rngState)
 	nextRay.dir = ray.dir;
 
     vec3 test;
-
-    bool directHit = false;
      
-    for(uint rayIndex = 0u; rayIndex <= NUM_RAYS; ++rayIndex) {
-        for (uint bounceIndex = 0u; bounceIndex <= MAX_BOUNCES; ++bounceIndex)
+    for(uint rayIndex = 0u; rayIndex <= settingsBuffer.numRays; ++rayIndex) {
+        for (uint bounceIndex = 0u; bounceIndex <= settingsBuffer.maxBounces; ++bounceIndex)
         {
             // shoot a ray out into the world
             HitInfo hitInfo;
             hitInfo.dist = FAR;
             TraceScene(nextRay, hitInfo);
-
-            if(hitInfo.didHit && bounceIndex == 0u) {
-                directHit = true;
-            }
             
             // if the ray missed, we are done
             if (hitInfo.dist == FAR) {
-                //if(!directHit) 
-                vec3 skyColor = GetSkyGradient(ray) / NUM_RAYS;
-                ret += skyColor * throughput;
+                vec3 skyColor = GetSkyGradient(ray) / settingsBuffer.numRays;
+                ret += skyColor * SKY_MULT * throughput;
                 break;
             }
                 
             // update the ray position
             nextRay.origin = (nextRay.origin + nextRay.dir * hitInfo.dist) + hitInfo.normal * RAY_POS_NORMAL_NUDGE;
-                
-            // calculate new ray direction, in a cosine weighted hemisphere oriented at normal
-            nextRay.dir = normalize(hitInfo.normal + RandomUnitVector(rngState));        
-                
+
+            Material mat = hitInfo.material;
+            
+            // calculate whether we are going to do a diffuse or specular reflection ray 
+            float doSpecular = (RandomFloat01(rngState) < hitInfo.material.specularity) ? 1.0f : 0.0f;
+            
+            // Calculate a new ray direction.
+            // Diffuse uses a normal oriented cosine weighted hemisphere sample.
+            // Perfectly smooth specular uses the reflection ray.
+            // Rough (glossy) specular lerps from the smooth specular to the rough diffuse by the material roughness squared
+            // Squaring the roughness is just a convention to make roughness feel more linear perceptually.
+            vec3 diffuseRayDir = normalize(hitInfo.normal + RandomUnitVector(rngState));
+            vec3 specularRayDir = reflect(ray.dir, hitInfo.normal);
+            specularRayDir = normalize(mix(specularRayDir, diffuseRayDir, mat.roughness));
+            nextRay.dir = mix(diffuseRayDir, specularRayDir, doSpecular);
+            
             // add in emissive lighting
-            ret += hitInfo.emissive * throughput;
-                
+            ret += vec3(mat.emissiveR, mat.emissiveG, mat.emissiveB) * throughput;
+            
             // update the colorMultiplier
-            throughput *= hitInfo.albedo;      
+            throughput *= vec3(mat.albedoR, mat.albedoG, mat.albedoB);
+
+            // Russian Roulette
+            // As the throughput gets smaller, the ray is more likely to get terminated early.
+            // Survivors have their value boosted to make up for fewer samples being in the average.
+            float p = max(throughput.r, max(throughput.g, throughput.b));
+            if (RandomFloat01(rngState) > p)
+                break;
         }
     }
-  
+
+
     // return pixel color
     return ret;
 }
 
-// Invocations in the (x, y, z) dimension
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-layout(binding = 0, rgba32f) uniform image2D OUTPUT_TEXTURE;
-
-layout(binding = 1, std430) restrict buffer SizeBuffer {
-    int width;
-    int height;
-}
-size_data;
-
-layout(binding = 2, std430) restrict buffer CameraBuffer {
-    mat4 cameraToWorld;
-    vec3 worldSpaceCameraPosition;
-    float width;
-    float height;
-    float near;
-    float frame;
-}
-camera_data;
-
-layout(binding = 3, std430) restrict buffer DirectionalLightBuffer {
-    vec3 position;
-    float intensity;
-}
-directional_light_data;
-
-layout(binding = 4, rgba32f) uniform image2D LAST_TEXTURE;
-
-// Buffer for all spheres in the scene
-/*layout(set = 0, binding = 4, std430) restrict buffer SpheresBuffer {
-    vec4 xyzr[];
-}
-spheres;*/
-
 // The code we want to execute in each invocation
 void main() {
     // gl_GlobalInvocationID.x uniquely identifies this invocation across all work groups
-    float u = gl_GlobalInvocationID.x / float(size_data.width);
-    float v = gl_GlobalInvocationID.y / float(size_data.height);
+    
+    uint rngState = uint(uint(gl_GlobalInvocationID.x) * uint(1973) + uint(gl_GlobalInvocationID.y) * uint(9277) + cameraBuffer.frame * uint(26699)) | uint(1);
+
+    // calculate subpixel camera jitter for anti aliasing
+    vec2 jitter = vec2(RandomFloat01(rngState), RandomFloat01(rngState)) - 0.5f;
+        
+    // calculate coordinates of the ray target on the imaginary pixel plane.
+    // -1 to +1 on x,y axis. 1 unit away on the z axis
+    float u = (gl_GlobalInvocationID.x + jitter.x) / float(settingsBuffer.width);
+    float v = (gl_GlobalInvocationID.y + jitter.y) / float(settingsBuffer.height);
+
+    // Skip rendering this pixel if it's odd/even compared to last frame, if checkerboard is enabled.
+    if(settingsBuffer.checkerboard && int(gl_GlobalInvocationID.x+gl_GlobalInvocationID.y)%2 == int(cameraBuffer.frame)%2) {
+        return;
+    }
+
     vec2 uv = vec2(1.0f - u, v);
 
-    vec3 viewLocal = vec3(uv * 2.0f - 1.0f, 1.0f) * vec3(camera_data.width, camera_data.height, camera_data.near);
-    vec4 view = vec4(viewLocal, 1) * camera_data.cameraToWorld;
-    vec3 origin = camera_data.worldSpaceCameraPosition;
+    vec3 viewLocal = vec3(uv * 2.0f - 1.0f, 1.0f) * vec3(cameraBuffer.width, cameraBuffer.height, cameraBuffer.near);
+    vec4 view = vec4(viewLocal, 1) * cameraBuffer.cameraBufferToWorld;
+    vec3 origin = cameraBuffer.worldSpaceCameraPosition;
     vec3 dir = -normalize(view.xyz - origin);
     Ray ray = CreateRay(origin, dir);
 
-    uint rngState = uint(uint(gl_GlobalInvocationID.x) * uint(1973) + uint(gl_GlobalInvocationID.y) * uint(9277) + camera_data.frame * uint(26699)) | uint(1);
+    
+
     vec4 color = vec4(GetColorForRay(ray, rngState), 1.0f);
 
     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
-    vec4 lastFrameColor = imageLoad(LAST_TEXTURE, texel);
-    imageStore(LAST_TEXTURE, texel, color);
+    vec4 lastFrameColor = imageLoad(OUTPUT_TEXTURE, texel);
 
-    color = mix(lastFrameColor, color, RECENT_FRAME_BIAS + 1.0f / (camera_data.frame + 1.0f));
+    if(settingsBuffer.temporalAccumulation) {
+        color = mix(lastFrameColor, color, settingsBuffer.recentFrameBias + 1.0f / float(cameraBuffer.frame + 1));
+    }
+
     imageStore(OUTPUT_TEXTURE, texel, color);
 }
