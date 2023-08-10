@@ -10,13 +10,15 @@ public partial class SettingsMenu : Control
     [Export] private Slider slider;
 
 	[Export] private ComputeTest computeTest;
-	[Export] private OptionButton resolutionOptions;
+	[Export] private OptionButton renderResolutionOptions;
+	[Export] private OptionButton windowResolutionOptions;
 	[Export] private SpinBox numRays;
 	[Export] private SpinBox maxBounces;
 	[Export] private SpinBox targetFPS;
 	[Export] private Slider recentFrameBias;
 	[Export] private CheckButton temporalAccumulationCheck;
 	[Export] private CheckButton checkerboardCheck;
+	[Export] private CheckButton viewReprojectionCheck;
 
 	public Vector2I[] resolutions = {new Vector2I(1920, 1080), new Vector2I(1600, 900), new Vector2I(1280, 720), new Vector2I(640, 360)};
 	public float[] scales = {2, 1.5f, 1, 0.5f};
@@ -46,7 +48,7 @@ public partial class SettingsMenu : Control
 		};
 
 		maxBounces.ValueChanged += (value) => {
-			computeTest.settings.numRays = (uint)value;
+			computeTest.settings.maxBounces = (uint)value;
 			computeTest.UpdateSettings();
 		};
 
@@ -66,12 +68,21 @@ public partial class SettingsMenu : Control
 			computeTest.UpdateSettings();
 		};
 
-		resolutionOptions.ItemSelected += (index) => {
+		renderResolutionOptions.ItemSelected += (index) => {
 			if(index >= resolutions.Length || index < 0) return;
 
-			GetWindow().Size = resolutions[index];
+			computeTest.UpdateRenderResolution(resolutions[index]);
+		};
+
+		windowResolutionOptions.ItemSelected += (index) => {
+			if(index >= resolutions.Length || index < 0) return;
+
 			this.Scale = new Vector2(scales[index], scales[index]);
-			computeTest.UpdateResolution(resolutions[index]);
+			computeTest.UpdateWindowResolution(resolutions[index]);
+		};
+
+		viewReprojectionCheck.Toggled += (value) => {
+			computeTest.ProjectedViewEnabled = value;
 		};
     }
 

@@ -10,8 +10,26 @@ public partial class ComputeTest : Sprite2D
     [Export] public Vector2I Resolution = new Vector2I(1280, 720);
     [Export] Camera3D Camera;
     [Export] Node3D SceneRoot;
+
+    private bool _projectedViewEnabled = false;
+    public bool ProjectedViewEnabled {
+        get { return _projectedViewEnabled; }
+        set {
+            _projectedViewEnabled = value;
+            if(value) {
+                ProjectedView.Visible = true;
+                ((ShaderMaterial)ProjectedView.MaterialOverride).SetShaderParameter("_Texture", imageTexture);
+                ProjectedView.Texture = imageTexture;
+            } else {
+                ProjectedView.Visible = false;
+            }
+        }
+    }
+    [Export] public float ProjectedViewOffset = 2f;
+    [Export] Sprite3D ProjectedView;
     [Export] float aspectRatio = 1280f / 720f;
     //[Export] float focusDistance = 1f;
+
 
     [Export]
     public bool Run
@@ -38,21 +56,12 @@ public partial class ComputeTest : Sprite2D
         }
     }
 
-    // [Export]
-    // public Transform3D Matrix
-    // {
-    //     get => Camera.GlobalTransform;
-    //     set
-    //     {
-    //     }
-    // }
-
     private RenderingDevice rd;
     private Rid shader;
 
     private const int SIZE_SETTINGS = 28;
     private const int SIZE_LIGHT = 44;
-    private const int SIZE_MATERIAL = 48;
+    private const int SIZE_MATERIAL = 52;
     private const int SIZE_SURFACE = 72;
     private const int SIZE_SPHERE = 56;
     private const int SIZE_VEC3 = 12;
@@ -92,6 +101,7 @@ public partial class ComputeTest : Sprite2D
         public float albedoG = 0.95f;
         public float albedoB = 0.95f;
         public int textureID = -1;
+        public float specularity = 0f;
         public float emissiveR = 0f;
         public float emissiveG = 0f;
         public float emissiveB = 0f;
@@ -168,6 +178,17 @@ public partial class ComputeTest : Sprite2D
          public float boxMaxZ;
          public int materialID;
          public float radius;
+    }
+
+    private float CalculateOffset(float fovDegrees)
+    {
+        return -0.00139f * fovDegrees + 0.57225f;
+    }
+
+    private void CalculateProjectedViewPosition() {
+        ProjectedView.GlobalPosition = Camera.GlobalPosition - Camera.GlobalTransform.Basis.Z * CalculateOffset(Camera.Fov);
+        ProjectedView.LookAt(Camera.GlobalPosition, Camera.GlobalTransform.Basis.Y);
+        ProjectedView.RotateObjectLocal(Vector3.Up, Mathf.Pi);
     }
 
     // Buffers to update
@@ -429,16 +450,33 @@ public partial class ComputeTest : Sprite2D
             img.SetData(Resolution.X, Resolution.Y, false, Image.Format.Rgbaf, byteData);
             imageTexture.Update(img);
         }
-        
+    
         currentFrame++;
+        if(_projectedViewEnabled) {
+            CalculateProjectedViewPosition();
+        }
+        lastFrameComputed = true;
     }
 
-    public void UpdateResolution(Vector2I newSize) {
+    public void UpdateRenderResolution(Vector2I newSize) {
         imageTexture = null;
         Resolution = newSize;
         settings.width = (uint)newSize.X;
         settings.height = (uint)newSize.Y;
         Initialize();
+        ReScale();
+    }
+
+    private Vector2I windowSize;
+
+    public void UpdateWindowResolution(Vector2I newSize) {
+        windowSize = newSize;
+        ReScale();
+        GetWindow().Size = newSize;
+    }
+
+    private void ReScale() {
+        Scale = new Vector2((float)windowSize.X / Resolution.X, (float)windowSize.Y / Resolution.Y);
     }
 
     public static List<Vector3> BytesToVector3List(byte[] byteArray) {
@@ -495,10 +533,12 @@ public partial class ComputeTest : Sprite2D
                 materialData.albedoR = standardMaterial.AlbedoColor.R;
                 materialData.albedoG =  standardMaterial.AlbedoColor.G;
                 materialData.albedoB =  standardMaterial.AlbedoColor.B;
+                materialData.specularity = standardMaterial.MetallicSpecular;
                 materialData.emissiveR = standardMaterial.Emission.R;
                 materialData.emissiveG = standardMaterial.Emission.G;
                 materialData.emissiveB = standardMaterial.Emission.B;
                 materialData.roughness = standardMaterial.Roughness;
+                materialData.alpha = standardMaterial.AlbedoColor.A;
                 materialData.textureID = 0;
                 materialData.emissiveTextureID = 0;
                 materialData.alphaTextureID = 0;
@@ -671,9 +711,9 @@ public partial class ComputeTest : Sprite2D
         indexDataBytes = GetBytes(bigIndexList, SIZE_NUM);
         materialDataBytes = GetBytes(bigMaterialList, SIZE_MATERIAL);
 
-        for(int i=0; i<bigMaterialList.Count; i++) {
-            GD.Print(bigMaterialList[i]);
-        }
+        // for(int i=0; i<bigMaterialList.Count; i++) {
+        //     GD.Print(bigMaterialList[i].alpha);
+        // }
     }
 
     private int GetMaterialFromCache(MaterialData materialData) {
@@ -833,6 +873,8 @@ public partial class ComputeTest : Sprite2D
         settings.recentFrameBias = 0f;
         settings.checkerboard = false;
 
+        windowSize = Resolution;
+
         if (!Engine.IsEditorHint())
         {
             if (!_initialized)
@@ -848,13 +890,20 @@ public partial class ComputeTest : Sprite2D
     public double interval = 1f / 60f;
     double t = 0f;
 
+    private bool lastFrameComputed = true;
+
     public override void _Process(double delta)
     {
         if (!Engine.IsEditorHint())
         {
             if (t >= interval)
             {
-                Compute();
+                if(lastFrameComputed) {
+                    lastFrameComputed = false;
+                    Compute();
+                } else {
+                    GD.Print("Failed to compute last frame on time, skipping this frame!");
+                }
                 t = 0;
             }
 

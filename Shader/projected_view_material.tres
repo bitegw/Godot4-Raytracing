@@ -1,0 +1,9 @@
+[gd_resource type="ShaderMaterial" load_steps=3 format=3 uid="uid://tme0xqkdvj70"]
+
+[ext_resource type="Shader" path="res://Shader/projected_view.gdshader" id="1_0kfhn"]
+[ext_resource type="Texture2D" uid="uid://biqpmv06so27o" path="res://Screenshots/Screenshot 2023-05-16_Diffuse.png" id="2_vfogj"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_0kfhn")
+shader_parameter/_Texture = ExtResource("2_vfogj")

@@ -64,6 +64,7 @@ struct Material {
 	float albedoG;
 	float albedoB;
     int textureID;
+    float specularity;
 	float emissiveR;
 	float emissiveG;
 	float emissiveB;
@@ -150,6 +151,7 @@ layout(binding = 10, std430) readonly buffer SphereBuffer {
 // layout(binding = 12, rgba32f) uniform image2D ENVIRONMENT;
 
 const float FAR = 4000.0f;
+const float SKY_MULT = 0.75f;
 const float RAY_POS_NORMAL_NUDGE = 0.01f;
 const float TWO_PI = 6.28318530718f;
 
@@ -213,8 +215,7 @@ bool RaySphere(in Ray ray, in vec3 sphereCentre, in float sphereRadius, inout Hi
             return true;
 		}
 
-		/*hitInfo.frontFace = dot(ray.dir, hitInfo.normal) <= 0.0f;
-        if(hitInfo.frontFace) hitInfo.normal *= -1.0f;*/
+		hitInfo.frontFace = dot(ray.dir, hitInfo.normal) <= 0.0f;
 	}
 
     return false;
@@ -433,9 +434,9 @@ void TraceScene(in Ray ray, inout HitInfo hitInfo) {
         vec3 boxMin = vec3(sphere.boxMinX, sphere.boxMinY, sphere.boxMinZ);
         vec3 boxMax = vec3(sphere.boxMaxX, sphere.boxMaxY, sphere.boxMaxZ);
 
-        // if(IntersectAABB(ray.origin, ray.dir, boxMin, boxMax)) {
-        //     continue;
-        // }
+        if(IntersectAABB(ray.origin - position, ray.dir, boxMin, boxMax)) {
+            continue;
+        }
 
         if(sphere.materialID >= 0) {
             material = materialBuffer.materials[sphere.materialID];
@@ -446,6 +447,20 @@ void TraceScene(in Ray ray, inout HitInfo hitInfo) {
         if(RaySphere(ray, position, sphere.radius, hitInfo)) {
             hitInfo.material = material;
         }
+    }
+}
+
+bool Refract(vec3 incidentDir, vec3 normal, float refractiveIndex, out vec3 refractedDir)
+{
+    float cosThetaIncident = dot(incidentDir, normal);
+    float discriminant = 1.0 - refractiveIndex * refractiveIndex * (1.0 - cosThetaIncident * cosThetaIncident);
+
+    if (discriminant > 0.0) {
+        refractedDir = refractiveIndex * (incidentDir - normal * cosThetaIncident) - normal * sqrt(discriminant);
+        return true;
+    } else {
+        refractedDir = vec3(0.0);
+        return false; // Total internal reflection
     }
 }
 
@@ -471,44 +486,61 @@ vec3 GetColorForRay(in Ray ray, inout uint rngState)
             // if the ray missed, we are done
             if (hitInfo.dist == FAR) {
                 vec3 skyColor = GetSkyGradient(ray) / settingsBuffer.numRays;
-                ret += skyColor * throughput;
+                ret += skyColor * SKY_MULT * throughput;
                 break;
             }
                 
             // update the ray position
             nextRay.origin = (nextRay.origin + nextRay.dir * hitInfo.dist) + hitInfo.normal * RAY_POS_NORMAL_NUDGE;
-                
-            // calculate new ray direction, in a cosine weighted hemisphere oriented at normal
-            vec3 diffuseDir = normalize(hitInfo.normal + RandomUnitVector(rngState));
-            vec3 specularDir = reflect(ray.dir, hitInfo.normal);
 
             Material mat = hitInfo.material;
-
-            nextRay.dir = mix(specularDir, diffuseDir, mat.roughness);
-                
+            
+            // calculate whether we are going to do a diffuse or specular reflection ray 
+            float doSpecular = (RandomFloat01(rngState) < hitInfo.material.specularity) ? 1.0f : 0.0f;
+            
+            // Calculate a new ray direction.
+            // Diffuse uses a normal oriented cosine weighted hemisphere sample.
+            // Perfectly smooth specular uses the reflection ray.
+            // Rough (glossy) specular lerps from the smooth specular to the rough diffuse by the material roughness squared
+            // Squaring the roughness is just a convention to make roughness feel more linear perceptually.
+            vec3 diffuseRayDir = normalize(hitInfo.normal + RandomUnitVector(rngState));
+            vec3 specularRayDir = reflect(ray.dir, hitInfo.normal);
+            specularRayDir = normalize(mix(specularRayDir, diffuseRayDir, mat.roughness));
+            nextRay.dir = mix(diffuseRayDir, specularRayDir, doSpecular);
+            
             // add in emissive lighting
             ret += vec3(mat.emissiveR, mat.emissiveG, mat.emissiveB) * throughput;
-                
+            
             // update the colorMultiplier
             throughput *= vec3(mat.albedoR, mat.albedoG, mat.albedoB);
+
+            // Russian Roulette
+            // As the throughput gets smaller, the ray is more likely to get terminated early.
+            // Survivors have their value boosted to make up for fewer samples being in the average.
+            float p = max(throughput.r, max(throughput.g, throughput.b));
+            if (RandomFloat01(rngState) > p)
+                break;
         }
     }
-  
+
+
     // return pixel color
     return ret;
 }
 
-// Buffer for all spheres in the scene
-/*layout(binding = 4, std430) restrict buffer SpheresBuffer {
-    vec4 xyzr[];
-}
-spheres;*/
-
 // The code we want to execute in each invocation
 void main() {
     // gl_GlobalInvocationID.x uniquely identifies this invocation across all work groups
-    float u = gl_GlobalInvocationID.x / float(settingsBuffer.width);
-    float v = gl_GlobalInvocationID.y / float(settingsBuffer.height);
+    
+    uint rngState = uint(uint(gl_GlobalInvocationID.x) * uint(1973) + uint(gl_GlobalInvocationID.y) * uint(9277) + cameraBuffer.frame * uint(26699)) | uint(1);
+
+    // calculate subpixel camera jitter for anti aliasing
+    vec2 jitter = vec2(RandomFloat01(rngState), RandomFloat01(rngState)) - 0.5f;
+        
+    // calculate coordinates of the ray target on the imaginary pixel plane.
+    // -1 to +1 on x,y axis. 1 unit away on the z axis
+    float u = (gl_GlobalInvocationID.x + jitter.x) / float(settingsBuffer.width);
+    float v = (gl_GlobalInvocationID.y + jitter.y) / float(settingsBuffer.height);
 
     // Skip rendering this pixel if it's odd/even compared to last frame, if checkerboard is enabled.
     if(settingsBuffer.checkerboard && int(gl_GlobalInvocationID.x+gl_GlobalInvocationID.y)%2 == int(cameraBuffer.frame)%2) {
@@ -523,53 +555,15 @@ void main() {
     vec3 dir = -normalize(view.xyz - origin);
     Ray ray = CreateRay(origin, dir);
 
-    uint rngState = uint(uint(gl_GlobalInvocationID.x) * uint(1973) + uint(gl_GlobalInvocationID.y) * uint(9277) + cameraBuffer.frame * uint(26699)) | uint(1);
+    
 
     vec4 color = vec4(GetColorForRay(ray, rngState), 1.0f);
-
-    // vec4 color = vec4(surfaceBuffer.surfaces[1].indexStart/12, (surfaceBuffer.surfaces[1].indexEnd - 6)/48, 0, 1.0f);
-
-    // vec4 color = vec4(materialBuffer.materials[0].albedoR,materialBuffer.materials[0].albedoG,materialBuffer.materials[0].albedoB, 1.0f);
-    // Material mat = materialBuffer.materials[surfaceBuffer.surfaces[0].materialID];
-    // vec4 color = vec4(mat.albedoR, mat.albedoG, mat.albedoB, 1);
-    
-    // vec4 color = vec4(surfaceBuffer.surfaces.length());
-    // vec4 color = vec4(surfaceBuffer.surfaces[0].indexStart, surfaceBuffer.surfaces[0].indexEnd, 1, 1);
-
-    // int j = int(cameraBuffer.frame/60) % 6;
-    // settingsBuffer.temporalAccumulation = false;
-    // int offsetAX = indexBuffer.indices[j] * 3;
-    // int offsetAY = indexBuffer.indices[j] * 3 + 1;
-    // int offsetAZ = indexBuffer.indices[j] * 3 + 2;
-    // vec3 vert = vec3(vertexBuffer.vertices[offsetAX], vertexBuffer.vertices[offsetAY], vertexBuffer.vertices[offsetAZ]);
-    // vec3[] verts = {vec3(1,0,1), vec3(-1,0,1), vec3(1,0,-1), vec3(-1,0,1), vec3(-1,0,-1), vec3(1,0,-1)};
-    // vec3 vertRef = verts[j];
-    // vec4 color;
-    // if(v > 0.55f) {
-    //     if(u > 0.66f) {
-    //         color = vec4(-vert.z, vert.z, 0, 1);
-    //     } else if(u > 0.33f) {
-    //         color = vec4(-vert.y, vert.y, 0, 1);
-    //     } else {
-    //         color = vec4(-vert.x, vert.x, 0, 1);
-    //     }
-    // } else if(v <= 0.45f) {
-    //     if(u > 0.66f) {
-    //         color = vec4(-vertRef.z, vertRef.z, 0, 1);
-    //     } else if(u > 0.33f) {
-    //         color = vec4(-vertRef.y, vertRef.y, 0, 1);
-    //     } else {
-    //         color = vec4(-vertRef.x, vertRef.x, 0, 1);
-    //     }
-    // } else {
-    //     color = vec4(0.5f);
-    // }
 
     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
     vec4 lastFrameColor = imageLoad(OUTPUT_TEXTURE, texel);
 
     if(settingsBuffer.temporalAccumulation) {
-        color = mix(lastFrameColor, color, settingsBuffer.recentFrameBias + 1.0f / (cameraBuffer.frame + 1.0f));
+        color = mix(lastFrameColor, color, settingsBuffer.recentFrameBias + 1.0f / float(cameraBuffer.frame + 1));
     }
 
     imageStore(OUTPUT_TEXTURE, texel, color);
