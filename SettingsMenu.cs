@@ -13,6 +13,7 @@ public partial class SettingsMenu : Control
 	[Export] private OptionButton resolutionOptions;
 	[Export] private SpinBox numRays;
 	[Export] private SpinBox maxBounces;
+	[Export] private SpinBox targetFPS;
 	[Export] private Slider recentFrameBias;
 	[Export] private CheckButton temporalAccumulationCheck;
 	[Export] private CheckButton checkerboardCheck;
@@ -47,6 +48,10 @@ public partial class SettingsMenu : Control
 		maxBounces.ValueChanged += (value) => {
 			computeTest.settings.numRays = (uint)value;
 			computeTest.UpdateSettings();
+		};
+
+		targetFPS.ValueChanged += (value) => {
+			computeTest.interval = 1.0 / value;
 		};
 
 		recentFrameBias.ValueChanged += (value) => {

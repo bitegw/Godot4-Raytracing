@@ -38,6 +38,27 @@ struct Surface {
     int indexEnd;
 };
 
+struct Sphere {
+    float positionX;
+    float positionY;
+    float positionZ;
+    // float rotationX;
+    // float rotationY;
+    // float rotationZ;
+    float scaleX;
+    float scaleY;
+    float scaleZ;
+    float boxMinX;
+    float boxMinY;
+    float boxMinZ;
+    float boxMaxX;
+    float boxMaxY;
+    float boxMaxZ;
+    int materialID;
+    float radius;
+};
+
+
 struct Material {
 	float albedoR;
 	float albedoG;
@@ -108,6 +129,11 @@ layout(binding = 8, std430) readonly buffer IndexBuffer {
 layout(binding = 9, std430) readonly buffer MaterialBuffer {
     Material materials[];
 } materialBuffer;
+
+// Spheres buffer
+layout(binding = 10, std430) readonly buffer SphereBuffer {
+    Sphere spheres[];
+} sphereBuffer;
 
 // // Albedo texture array
 // layout(binding = 8) uniform texture2DArray albedoTextures;
@@ -319,6 +345,7 @@ mat3 rotationZMatrix(float angle) {
 
 void TraceScene(in Ray ray, inout HitInfo hitInfo) {
     Surface surface;
+    Sphere sphere;
     Material material;
     Ray offsetRay;
     offsetRay.energy = ray.energy;
@@ -397,6 +424,27 @@ void TraceScene(in Ray ray, inout HitInfo hitInfo) {
             )) {
                 hitInfo.material = material;
             }
+        }
+    }
+
+    for(int i=0; i < sphereBuffer.spheres.length(); i++) {
+        sphere = sphereBuffer.spheres[i];
+        vec3 position = vec3(sphere.positionX, sphere.positionY, sphere.positionZ);
+        vec3 boxMin = vec3(sphere.boxMinX, sphere.boxMinY, sphere.boxMinZ);
+        vec3 boxMax = vec3(sphere.boxMaxX, sphere.boxMaxY, sphere.boxMaxZ);
+
+        // if(IntersectAABB(ray.origin, ray.dir, boxMin, boxMax)) {
+        //     continue;
+        // }
+
+        if(sphere.materialID >= 0) {
+            material = materialBuffer.materials[sphere.materialID];
+        } else {
+            material = defaultMaterial;
+        }
+
+        if(RaySphere(ray, position, sphere.radius, hitInfo)) {
+            hitInfo.material = material;
         }
     }
 }

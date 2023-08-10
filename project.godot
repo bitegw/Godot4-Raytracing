@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="RTX"
-run/main_scene="res://SpheresTest.scn"
+run/main_scene="res://Main.scn"
 config/features=PackedStringArray("4.0", "C#", "Forward Plus")
 config/icon="res://icon.svg"
 

@@ -1,10 +1,14 @@
-[gd_scene load_steps=10 format=3 uid="uid://bmf463dyukiji"]
+[gd_scene load_steps=13 format=3 uid="uid://bmf463dyukiji"]
 
 [ext_resource type="Material" uid="uid://b3adab3ecdccm" path="res://Materials/light.tres" id="1_6qwuu"]
 [ext_resource type="BoxMesh" uid="uid://c26or4k2qjxgi" path="res://Models/wall_mesh.tres" id="1_g3anr"]
 [ext_resource type="Material" uid="uid://cctf0t024p5hx" path="res://Materials/red.tres" id="2_xdsjy"]
 [ext_resource type="Material" uid="uid://cufwcfdr6tia1" path="res://Materials/green.tres" id="3_pcesb"]
-[ext_resource type="Material" uid="uid://b3u3bbmo5hu6t" path="res://Materials/blue.tres" id="4_ox6y8"]
+[ext_resource type="Script" path="res://Sphere.cs" id="5_v5vg7"]
+[ext_resource type="Material" uid="uid://brpddgwbhesdm" path="res://Materials/reflective.tres" id="5_vwsrh"]
+[ext_resource type="SphereMesh" uid="uid://cpos174earq4s" path="res://Models/sphere_mesh.tres" id="6_y5i4f"]
+[ext_resource type="Material" uid="uid://b3u3bbmo5hu6t" path="res://Materials/blue.tres" id="8_ena8t"]
+[ext_resource type="Material" uid="uid://dmssvjft3r7nf" path="res://Materials/glass.tres" id="9_46u08"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_78mds"]
 
@@ -12,8 +16,6 @@
 size = Vector3(2, 0.25, 2)
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_pt7ih"]
-
-[sub_resource type="TorusMesh" id="TorusMesh_1o82e"]
 
 [node name="CornellBox" type="Node3D"]
 
@@ -25,7 +27,7 @@ skeleton = NodePath("../..")
 transform = Transform3D(0.25, 0, 0, 0, 0.25, 0, 0, 0, 0.25, -0.524779, 0.127299, -0.367543)
 material_override = ExtResource("3_pcesb")
 mesh = SubResource("BoxMesh_78mds")
-skeleton = NodePath("../Torus2")
+skeleton = NodePath("")
 
 [node name="Wall2" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, -4.37114e-08, -1, 0, 1, -4.37114e-08, 0, 1, -0.986584)
@@ -61,15 +63,29 @@ visible = false
 mesh = SubResource("PlaneMesh_pt7ih")
 skeleton = NodePath("../Wall3")
 
-[node name="Torus" type="MeshInstance3D" parent="."]
-transform = Transform3D(0.5, 0, 0, 0, -2.18557e-08, -0.5, 0, 0.5, -2.18557e-08, 0, 1, 0)
-visible = false
-mesh = SubResource("TorusMesh_1o82e")
-skeleton = NodePath("../..")
+[node name="Sphere" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.01393, 0)
+material_override = ExtResource("5_vwsrh")
+mesh = ExtResource("6_y5i4f")
+script = ExtResource("5_v5vg7")
 
-[node name="Torus2" type="MeshInstance3D" parent="."]
-transform = Transform3D(0.5, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 0.389737, 0.097389, -0.245029)
-visible = false
-material_override = ExtResource("4_ox6y8")
-mesh = SubResource("TorusMesh_1o82e")
-skeleton = NodePath("../..")
+[node name="Sphere2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.724151, 0.262467, 0)
+material_override = ExtResource("8_ena8t")
+mesh = ExtResource("6_y5i4f")
+skeleton = NodePath("../Sphere")
+script = ExtResource("5_v5vg7")
+
+[node name="Sphere3" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.199886, 0.262467, -0.578323)
+material_override = ExtResource("2_xdsjy")
+mesh = ExtResource("6_y5i4f")
+skeleton = NodePath("../Sphere")
+script = ExtResource("5_v5vg7")
+
+[node name="Sphere4" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.711952, 0.262467, 0.482998)
+material_override = ExtResource("9_46u08")
+mesh = ExtResource("6_y5i4f")
+skeleton = NodePath("../Sphere")
+script = ExtResource("5_v5vg7")

@@ -54,6 +54,7 @@ public partial class ComputeTest : Sprite2D
     private const int SIZE_LIGHT = 44;
     private const int SIZE_MATERIAL = 48;
     private const int SIZE_SURFACE = 72;
+    private const int SIZE_SPHERE = 56;
     private const int SIZE_VEC3 = 12;
     private const int SIZE_VEC2 = 8;
     private const int SIZE_NUM = 4;
@@ -86,7 +87,7 @@ public partial class ComputeTest : Sprite2D
     }
 
     [StructLayout(LayoutKind.Sequential, Size = SIZE_MATERIAL)]
-    public struct MaterialData {
+    public class MaterialData {
         public float albedoR = 0.95f;
         public float albedoG = 0.95f;
         public float albedoB = 0.95f;
@@ -101,6 +102,10 @@ public partial class ComputeTest : Sprite2D
         public int alphaTextureID = -1;
 
         public MaterialData() {}
+
+        public override string ToString() {
+            return $"({albedoR},{albedoG},{albedoB}), {roughness}, {alpha}, ({emissiveR}, {emissiveG}, {emissiveB})";
+        }
     }
 
     class SurfaceData {
@@ -144,6 +149,27 @@ public partial class ComputeTest : Sprite2D
          public int indexEnd;
     }
 
+    [StructLayout(LayoutKind.Sequential, Size = SIZE_SPHERE)]
+    class SphereData {
+         public float positionX;
+         public float positionY;
+         public float positionZ;
+        //  public float rotationX;
+        //  public float rotationY;
+        //  public float rotationZ;
+         public float scaleX;
+         public float scaleY;
+         public float scaleZ;
+         public float boxMinX;
+         public float boxMinY;
+         public float boxMinZ;
+         public float boxMaxX;
+         public float boxMaxY;
+         public float boxMaxZ;
+         public int materialID;
+         public float radius;
+    }
+
     // Buffers to update
     public SettingsData settings;
     private Rid settingsBuffer;
@@ -156,6 +182,7 @@ public partial class ComputeTest : Sprite2D
 
     private Rid lightDataBuffer;
     private Rid surfaceDataBuffer;
+    private Rid sphereDataBuffer;
     private Rid vertexBuffer;
     private Rid normalBuffer;
     private Rid uvBuffer;
@@ -216,6 +243,7 @@ public partial class ComputeTest : Sprite2D
 
         // Mesh
         surfaceDataBuffer = rd.StorageBufferCreate((uint)surfaceDataBytes.Length, surfaceDataBytes);
+        sphereDataBuffer = rd.StorageBufferCreate((uint)sphereDataBytes.Length, sphereDataBytes);
         vertexBuffer = rd.StorageBufferCreate((uint)vertexDataBytes.Length, vertexDataBytes);
         normalBuffer = rd.StorageBufferCreate((uint)normalDataBytes.Length, normalDataBytes);
         uvBuffer = rd.StorageBufferCreate((uint)uvDataBytes.Length, uvDataBytes);
@@ -292,6 +320,11 @@ public partial class ComputeTest : Sprite2D
             UniformType = RenderingDevice.UniformType.StorageBuffer,
             Binding = 9
         };
+        var uniformSpheres = new RDUniform
+        {
+            UniformType = RenderingDevice.UniformType.StorageBuffer,
+            Binding = 10
+        };
 
         // var uniformTexturesAlbedo = new RDUniform
         // {
@@ -319,6 +352,7 @@ public partial class ComputeTest : Sprite2D
         uniformCamera.AddId(cameraDataBuffer);
         uniformLights.AddId(lightDataBuffer);
         uniformSurfaces.AddId(surfaceDataBuffer);
+        uniformSpheres.AddId(sphereDataBuffer);
         uniformVertices.AddId(vertexBuffer);
         uniformNormals.AddId(normalBuffer);
         uniformUVs.AddId(uvBuffer);
@@ -341,6 +375,7 @@ public partial class ComputeTest : Sprite2D
             uniformUVs,
             uniformIndices, 
             uniformMaterials, 
+            uniformSpheres, 
             // uniformTexturesAlbedo, 
             // uniformTexturesRoughness, 
             // uniformTexturesEmissive, 
@@ -382,15 +417,15 @@ public partial class ComputeTest : Sprite2D
         rd.Sync();
 
         // Read new data from the output image buffer
+        var byteData = rd.TextureGetData(outputTexture, 0);
         if (imageTexture is null)
         {
-            img = Image.Create(Resolution.X, Resolution.Y, false, Image.Format.Rgbaf);
+            img = Image.CreateFromData(Resolution.X, Resolution.Y, false, Image.Format.Rgbaf, byteData);
             img.ResourceName = "Raytraced Image";
 
             imageTexture = ImageTexture.CreateFromImage(img);
             Texture = imageTexture;
         } else {
-            var byteData = rd.TextureGetData(outputTexture, 0);
             img.SetData(Resolution.X, Resolution.Y, false, Image.Format.Rgbaf, byteData);
             imageTexture.Update(img);
         }
@@ -432,8 +467,47 @@ public partial class ComputeTest : Sprite2D
         if(!node.Visible)
             return;
 
-        if(node is MeshInstance3D) {
-            MeshInstance3D meshInstance = (MeshInstance3D)node;
+        if(node is Sphere sphere) {
+            SphereData newSphereData = new SphereData
+            {
+                positionX = sphere.GlobalPosition.X,
+                positionY = sphere.GlobalPosition.Y,
+                positionZ = sphere.GlobalPosition.Z,
+                // rotation = sphere.GlobalRotation,
+                scaleX = sphere.Scale.X,
+                scaleY = sphere.Scale.Y,
+                scaleZ = sphere.Scale.Z,
+                boxMinX = sphere.GetAabb().Position.X,
+                boxMinY = sphere.GetAabb().Position.Y,
+                boxMinZ = sphere.GetAabb().Position.Z,
+                boxMaxX = sphere.GetAabb().End.X,
+                boxMaxY = sphere.GetAabb().End.Y,
+                boxMaxZ = sphere.GetAabb().End.Z,
+                radius = ((SphereMesh)sphere.Mesh).Radius
+            };
+            var materialData = new MaterialData();
+            Material material = sphere.MaterialOverride;
+            Material materialOverlay = sphere.MaterialOverlay;
+            if(materialOverlay is not null) {
+                material = materialOverlay;
+            }
+            if(material is StandardMaterial3D standardMaterial) {
+                materialData.albedoR = standardMaterial.AlbedoColor.R;
+                materialData.albedoG =  standardMaterial.AlbedoColor.G;
+                materialData.albedoB =  standardMaterial.AlbedoColor.B;
+                materialData.emissiveR = standardMaterial.Emission.R;
+                materialData.emissiveG = standardMaterial.Emission.G;
+                materialData.emissiveB = standardMaterial.Emission.B;
+                materialData.roughness = standardMaterial.Roughness;
+                materialData.textureID = 0;
+                materialData.emissiveTextureID = 0;
+                materialData.alphaTextureID = 0;
+                materialData.textureID = 0;
+            }
+            int materialIndex = GetMaterialFromCache(materialData);
+            newSphereData.materialID = materialIndex;
+            bigSphereList.Add(newSphereData);
+        } else if(node is MeshInstance3D meshInstance) {
             Mesh mesh = meshInstance.Mesh;
             if(mesh != null) {
                 int numSurfaces = mesh.GetSurfaceCount();
@@ -465,7 +539,6 @@ public partial class ComputeTest : Sprite2D
                         material = materialOverlay;
                     }
                     if(material is StandardMaterial3D standardMaterial) {
-                        GD.Print("Standard material found.");
                         materialData.albedoR = standardMaterial.AlbedoColor.R;
                         materialData.albedoG =  standardMaterial.AlbedoColor.G;
                         materialData.albedoB =  standardMaterial.AlbedoColor.B;
@@ -502,16 +575,10 @@ public partial class ComputeTest : Sprite2D
         List<int> bigIndexList,
         List<MaterialData> bigMaterialList,
         List<SurfaceDescriptor> bigSurfaceDescriptorList,
-        System.Collections.Generic.Dictionary<MaterialData, int> materialCache,
-        System.Collections.Generic.Dictionary<SurfaceData, int> surfaceDataCache,
         ref int indexOffset
         )
     {
-        if (!materialCache.TryGetValue(surfaceInstance.material, out int materialIndex)) {
-            materialIndex = bigMaterialList.Count;
-            bigMaterialList.Add(surfaceInstance.material);
-            materialCache[surfaceInstance.material] = materialIndex;
-        }
+        int materialIndex = GetMaterialFromCache(surfaceInstance.material);
 
         SurfaceDescriptor surfaceDescriptor = new SurfaceDescriptor {
             positionX = surfaceInstance.position.X,
@@ -563,10 +630,25 @@ public partial class ComputeTest : Sprite2D
     List<int> bigIndexList;
     List<MaterialData> bigMaterialList;
     List<SurfaceDescriptor> bigSurfaceDescriptorList;
+    List<SphereData> bigSphereList;
 
-    byte[] surfaceDataBytes, vertexDataBytes, normalDataBytes, uvDataBytes, indexDataBytes, materialDataBytes;
+    byte[] surfaceDataBytes, sphereDataBytes, vertexDataBytes, normalDataBytes, uvDataBytes, indexDataBytes, materialDataBytes;
+
+    System.Collections.Generic.Dictionary<MaterialData, int> materialCache;
+    System.Collections.Generic.Dictionary<SurfaceData, int> surfaceDataCache;
 
     public void UpdateScene(Node3D root) {
+        materialCache = new System.Collections.Generic.Dictionary<MaterialData, int>();
+        surfaceDataCache = new System.Collections.Generic.Dictionary<SurfaceData, int>();
+
+        bigVertexList = new List<Vector3>();
+        bigNormalList = new List<Vector3>();
+        bigUVList = new List<Vector2>();
+        bigIndexList = new List<int>();
+        bigMaterialList = new List<MaterialData>();
+        bigSurfaceDescriptorList = new List<SurfaceDescriptor>();
+        bigSphereList = new List<SphereData>();
+
         // Process node will scan the nodes and populate the surfaceInstances and genericLights.
         if(surfaceInstances == null)
             surfaceInstances = new List<SurfaceInstance>();
@@ -575,32 +657,42 @@ public partial class ComputeTest : Sprite2D
         
         ProcessNode(root);
 
-        bigVertexList = new List<Vector3>();
-        bigNormalList = new List<Vector3>();
-        bigUVList = new List<Vector2>();
-        bigIndexList = new List<int>();
-        bigMaterialList = new List<MaterialData>();
-        bigSurfaceDescriptorList = new List<SurfaceDescriptor>();
-
-        System.Collections.Generic.Dictionary<MaterialData, int> materialCache = new System.Collections.Generic.Dictionary<MaterialData, int>();
-        System.Collections.Generic.Dictionary<SurfaceData, int> surfaceDataCache = new System.Collections.Generic.Dictionary<SurfaceData, int>();
-
         int indexOffset = 0;
 
         foreach(SurfaceInstance surfaceInstance in surfaceInstances) {
-            RegisterSurface(surfaceInstance, bigVertexList, bigNormalList, bigUVList, bigIndexList, bigMaterialList, bigSurfaceDescriptorList, materialCache, surfaceDataCache, ref indexOffset);
+            RegisterSurface(surfaceInstance, bigVertexList, bigNormalList, bigUVList, bigIndexList, bigMaterialList, bigSurfaceDescriptorList, ref indexOffset);
         }
 
         surfaceDataBytes = GetBytes(bigSurfaceDescriptorList, SIZE_SURFACE);
+        sphereDataBytes = GetBytes(bigSphereList, SIZE_SPHERE);
         vertexDataBytes = GetBytes(bigVertexList, SIZE_VEC3);
         normalDataBytes = GetBytes(bigNormalList, SIZE_VEC3);
         uvDataBytes = GetBytes(bigUVList, SIZE_VEC2);
         indexDataBytes = GetBytes(bigIndexList, SIZE_NUM);
         materialDataBytes = GetBytes(bigMaterialList, SIZE_MATERIAL);
+
+        for(int i=0; i<bigMaterialList.Count; i++) {
+            GD.Print(bigMaterialList[i]);
+        }
+    }
+
+    private int GetMaterialFromCache(MaterialData materialData) {
+        if(materialData is null) {
+            return -1;
+        }
+
+        if (!materialCache.TryGetValue(materialData, out int materialIndex)) {
+            materialIndex = bigMaterialList.Count;
+            bigMaterialList.Add(materialData);
+            materialCache[materialData] = materialIndex;
+        }
+
+        return materialIndex;
     }
 
     public void UpdateSceneBuffers() {
         rd.BufferUpdate(surfaceDataBuffer, 0, (uint)surfaceDataBytes.Length, surfaceDataBytes);
+        rd.BufferUpdate(sphereDataBuffer, 0, (uint)sphereDataBytes.Length, sphereDataBytes);
         rd.BufferUpdate(vertexBuffer, 0, (uint)vertexDataBytes.Length, vertexDataBytes);
         rd.BufferUpdate(normalBuffer, 0, (uint)normalDataBytes.Length, normalDataBytes);
         rd.BufferUpdate(uvBuffer, 0, (uint)uvDataBytes.Length, uvDataBytes);
@@ -753,7 +845,7 @@ public partial class ComputeTest : Sprite2D
         }
     }
 
-    double interval = 1f / 60f;
+    public double interval = 1f / 60f;
     double t = 0f;
 
     public override void _Process(double delta)
