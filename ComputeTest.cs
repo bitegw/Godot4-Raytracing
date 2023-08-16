@@ -1,10 +1,10 @@
 using Godot;
 using Godot.Collections;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-[Tool]
 public partial class ComputeTest : Sprite2D
 {
     [Export] public Vector2I Resolution = new Vector2I(1280, 720);
@@ -18,7 +18,11 @@ public partial class ComputeTest : Sprite2D
             _projectedViewEnabled = value;
             if(value) {
                 ProjectedView.Visible = true;
-                ((ShaderMaterial)ProjectedView.MaterialOverride).SetShaderParameter("_Texture", imageTexture);
+                ProjectedView.GlobalPosition = Camera.GlobalPosition - Camera.GlobalTransform.Basis.Z * CalculateOffset(Camera.Fov);
+                defaultDistance = ProjectedView.GlobalPosition.DistanceTo(Camera.GlobalPosition);
+                projectedViewMaterial.SetShaderParameter("screenSize", Resolution);
+                projectedViewMaterial.SetShaderParameter("_Texture", imageTexture);
+                projectedViewMaterial.SetShaderParameter("dist", 0f);
                 ProjectedView.Texture = imageTexture;
             } else {
                 ProjectedView.Visible = false;
@@ -29,7 +33,6 @@ public partial class ComputeTest : Sprite2D
     [Export] Sprite3D ProjectedView;
     [Export] float aspectRatio = 1280f / 720f;
     //[Export] float focusDistance = 1f;
-
 
     [Export]
     public bool Run
@@ -59,11 +62,14 @@ public partial class ComputeTest : Sprite2D
     private RenderingDevice rd;
     private Rid shader;
 
+    private ShaderMaterial projectedViewMaterial;
+
     private const int SIZE_SETTINGS = 28;
     private const int SIZE_LIGHT = 44;
     private const int SIZE_MATERIAL = 52;
     private const int SIZE_SURFACE = 72;
     private const int SIZE_SPHERE = 56;
+    private const int SIZE_PORTAL = 36;
     private const int SIZE_VEC3 = 12;
     private const int SIZE_VEC2 = 8;
     private const int SIZE_NUM = 4;
@@ -88,7 +94,7 @@ public partial class ComputeTest : Sprite2D
          public float colorR;
          public float colorG;
          public float colorB;
-         public float intensity;
+         public float energy;
          public bool isDirectionalLight;
          public float directionX; // or range if not directional
          public float directionY;
@@ -101,12 +107,12 @@ public partial class ComputeTest : Sprite2D
         public float albedoG = 0.95f;
         public float albedoB = 0.95f;
         public int textureID = -1;
-        public float specularity = 0f;
+        public float specularity = 0.0f;
         public float emissiveR = 0f;
         public float emissiveG = 0f;
         public float emissiveB = 0f;
         public int emissiveTextureID = -1;
-        public float roughness = 1f;
+        public float roughness = 0.0f;
         public int roughnessTextureID = -1;
         public float alpha = 1f;
         public int alphaTextureID = -1;
@@ -180,13 +186,30 @@ public partial class ComputeTest : Sprite2D
          public float radius;
     }
 
+    [StructLayout(LayoutKind.Sequential, Size = SIZE_PORTAL)]
+    class PortalData {
+         public float positionX;
+         public float positionY;
+         public float positionZ;
+         public float rotationX;
+         public float rotationY;
+         public float rotationZ;
+         public float width;
+         public float height;
+         public int otherID;
+    }
+
     private float CalculateOffset(float fovDegrees)
     {
         return -0.00139f * fovDegrees + 0.57225f;
     }
 
-    private void CalculateProjectedViewPosition() {
+    private void UpdateProjectedView() {
+        defaultCameraPosition = Camera.GlobalPosition;
         ProjectedView.GlobalPosition = Camera.GlobalPosition - Camera.GlobalTransform.Basis.Z * CalculateOffset(Camera.Fov);
+        projectedViewMaterial.SetShaderParameter("offset", Vector2.Zero);
+        projectedViewMaterial.SetShaderParameter("angle", Vector2.Zero);
+        projectedViewMaterial.SetShaderParameter("dist", 0f);
         ProjectedView.LookAt(Camera.GlobalPosition, Camera.GlobalTransform.Basis.Y);
         ProjectedView.RotateObjectLocal(Vector3.Up, Mathf.Pi);
     }
@@ -199,8 +222,6 @@ public partial class ComputeTest : Sprite2D
     private float[] cameraData;
     private Rid cameraDataBuffer;
 
-    private List<LightData> lightData;
-
     private Rid lightDataBuffer;
     private Rid surfaceDataBuffer;
     private Rid sphereDataBuffer;
@@ -210,10 +231,9 @@ public partial class ComputeTest : Sprite2D
     private Rid indexBuffer;
     private Rid materialBuffer;
 
-    // private Rid albedoTextureBuffer;
-    // private Rid emissiveTextureBuffer;
-    // private Rid roughnessTextureBuffer;
-    // private Rid alphaTextureBuffer;
+    private Rid portalDataBuffer;
+
+    // private Rid textureBuffer;
 
     private Rid outputTexture;
     private Image img;
@@ -260,7 +280,7 @@ public partial class ComputeTest : Sprite2D
         UpdateScene(SceneRoot);
 
         // Light
-        lightDataBuffer = rd.StorageBufferCreate(1);
+        lightDataBuffer = rd.StorageBufferCreate((uint)lightDataBytes.Length, lightDataBytes);
 
         // Mesh
         surfaceDataBuffer = rd.StorageBufferCreate((uint)surfaceDataBytes.Length, surfaceDataBytes);
@@ -271,10 +291,10 @@ public partial class ComputeTest : Sprite2D
         indexBuffer = rd.StorageBufferCreate((uint)indexDataBytes.Length, indexDataBytes);
         materialBuffer = rd.StorageBufferCreate((uint)materialDataBytes.Length, materialDataBytes);
 
-        // albedoTextureBuffer = rd.TextureBufferCreate(1, RenderingDevice.DataFormat.R32G32B32A32Sfloat);
-        // roughnessTextureBuffer = rd.TextureBufferCreate(1, RenderingDevice.DataFormat.R32G32B32A32Sfloat);
-        // emissiveTextureBuffer = rd.TextureBufferCreate(1, RenderingDevice.DataFormat.R32G32B32A32Sfloat);
-        // alphaTextureBuffer = rd.TextureBufferCreate(1, RenderingDevice.DataFormat.R32G32B32A32Sfloat);
+        portalDataBuffer = rd.StorageBufferCreate((uint)portalDataBytes.Length + 1, portalDataBytes);
+
+
+        // textureBuffer = rd.TextureBufferCreate(textureData, RenderingDevice.DataFormat.R32G32B32A32Sfloat);
 
         // Create uniforms to assign the buffers to the rendering device
 
@@ -346,23 +366,13 @@ public partial class ComputeTest : Sprite2D
             UniformType = RenderingDevice.UniformType.StorageBuffer,
             Binding = 10
         };
+        var uniformPortals = new RDUniform
+        {
+            UniformType = RenderingDevice.UniformType.StorageBuffer,
+            Binding = 11
+        };
 
-        // var uniformTexturesAlbedo = new RDUniform
-        // {
-        //     UniformType = RenderingDevice.UniformType.TextureBuffer,
-        //     Binding = 
-        // };
-        // var uniformTexturesRoughness = new RDUniform
-        // {
-        //     UniformType = RenderingDevice.UniformType.TextureBuffer,
-        //     Binding = 
-        // };
-        // var uniformTextures = new RDUniform
-        // {
-        //     UniformType = RenderingDevice.UniformType.TextureBuffer,
-        //     Binding = 
-        // };
-        // var uniformTexturesAlpha = new RDUniform
+        // var uniformTextures= new RDUniform
         // {
         //     UniformType = RenderingDevice.UniformType.TextureBuffer,
         //     Binding = 
@@ -380,10 +390,9 @@ public partial class ComputeTest : Sprite2D
         uniformIndices.AddId(indexBuffer);
         uniformMaterials.AddId(materialBuffer);
 
-        // uniformTexturesAlbedo.AddId(albedoTextureBuffer);
-        // uniformTexturesRoughness.AddId(roughnessTextureBuffer);
-        // uniformTexturesEmissive.AddId(emissiveTextureBuffer);
-        // uniformTexturesAlpha.AddId(alphaTextureBuffer);
+        uniformPortals.AddId(portalDataBuffer);
+
+        // uniformTextures.AddId(albedoTextureBuffer);
 
         uniformSet = rd.UniformSetCreate(new Array<RDUniform> { 
             outputTextureUniform, 
@@ -397,10 +406,8 @@ public partial class ComputeTest : Sprite2D
             uniformIndices, 
             uniformMaterials, 
             uniformSpheres, 
-            // uniformTexturesAlbedo, 
-            // uniformTexturesRoughness, 
-            // uniformTexturesEmissive, 
-            // uniformTexturesAlpha 
+            uniformPortals, 
+            // uniformTextures
         }, shader, 0);
 
         // Create a compute pipeline
@@ -453,7 +460,7 @@ public partial class ComputeTest : Sprite2D
     
         currentFrame++;
         if(_projectedViewEnabled) {
-            CalculateProjectedViewPosition();
+            UpdateProjectedView();
         }
         lastFrameComputed = true;
     }
@@ -476,7 +483,18 @@ public partial class ComputeTest : Sprite2D
     }
 
     private void ReScale() {
+        ProjectedView.Scale = new Vector3(1280f / Resolution.X, 720f / Resolution.Y, 1);
         Scale = new Vector2((float)windowSize.X / Resolution.X, (float)windowSize.Y / Resolution.Y);
+        RefreshProjectedView();
+    }
+
+    private async void RefreshProjectedView()
+    {
+        bool projectedViewWasEnabled = ProjectedViewEnabled;
+        await ToSignal(GetTree().CreateTimer(0.01f), "timeout");
+        ProjectedViewEnabled = projectedViewWasEnabled;
+        await ToSignal(GetTree().CreateTimer(0.5f), "timeout"); // Hack to refresh the view if the image hasn't been recomputed by the GPU on time.
+        ProjectedViewEnabled = projectedViewWasEnabled;
     }
 
     public static List<Vector3> BytesToVector3List(byte[] byteArray) {
@@ -505,7 +523,36 @@ public partial class ComputeTest : Sprite2D
         if(!node.Visible)
             return;
 
-        if(node is Sphere sphere) {
+        if(node is Portal portal) {
+            int id=bigPortalList.Count;
+
+            Portal portalOther = portal.Other;
+            PortalData portalDataA = new PortalData{
+                positionX = portal.GlobalPosition.X,
+                positionY = portal.GlobalPosition.Y,
+                positionZ = portal.GlobalPosition.Z,
+                rotationX = portal.GlobalRotation.X,
+                rotationY = portal.GlobalRotation.Y,
+                rotationZ = portal.GlobalRotation.Z,
+                width = portal.Width,
+                height = portal.Height,
+                otherID = id+1
+            };
+            PortalData portalDataB = new PortalData{
+                positionX = portalOther.GlobalPosition.X,
+                positionY = portalOther.GlobalPosition.Y,
+                positionZ = portalOther.GlobalPosition.Z,
+                rotationX = portalOther.GlobalRotation.X,
+                rotationY = portalOther.GlobalRotation.Y,
+                rotationZ = portalOther.GlobalRotation.Z,
+                width = portalOther.Width,
+                height = portalOther.Height,
+                otherID = id
+            };
+            bigPortalList.Add(portalDataA);
+            bigPortalList.Add(portalDataB);
+
+        } else if(node is Sphere sphere) {
             SphereData newSphereData = new SphereData
             {
                 positionX = sphere.GlobalPosition.X,
@@ -597,8 +644,30 @@ public partial class ComputeTest : Sprite2D
                     surfaceInstances.Add(newSurfaceInstance);
                 }
             }
-        } else if(node is DirectionalLight3D){
-            // GD.Print("Light!");
+        } else if(node is Light3D light ){
+            var lightData = new LightData
+            {
+                positionX = light.Position.X,
+                positionY = light.Position.Y,
+                positionZ = light.Position.Z,
+                colorR = light.LightColor.R,
+                colorG = light.LightColor.G,
+                colorB = light.LightColor.B,
+                energy = light.LightEnergy
+            };
+            if (light is DirectionalLight3D) {
+                lightData.isDirectionalLight = true;
+                lightData.directionX = light.Basis.Z.X;
+                lightData.directionY = light.Basis.Z.Y;
+                lightData.directionZ = light.Basis.Z.Z;
+            } else if (light is OmniLight3D omniLight) {
+                lightData.isDirectionalLight = false;
+                lightData.directionX = omniLight.OmniRange;
+                lightData.directionY = omniLight.OmniRange;
+                lightData.directionZ = omniLight.OmniRange;
+            }
+
+            bigLightList.Add(lightData);
         }
 
         foreach(Node childNode in node.GetChildren()) {
@@ -671,8 +740,10 @@ public partial class ComputeTest : Sprite2D
     List<MaterialData> bigMaterialList;
     List<SurfaceDescriptor> bigSurfaceDescriptorList;
     List<SphereData> bigSphereList;
+    List<LightData> bigLightList;
+    List<PortalData> bigPortalList;
 
-    byte[] surfaceDataBytes, sphereDataBytes, vertexDataBytes, normalDataBytes, uvDataBytes, indexDataBytes, materialDataBytes;
+    byte[] surfaceDataBytes, sphereDataBytes, vertexDataBytes, normalDataBytes, uvDataBytes, indexDataBytes, materialDataBytes, lightDataBytes, portalDataBytes;
 
     System.Collections.Generic.Dictionary<MaterialData, int> materialCache;
     System.Collections.Generic.Dictionary<SurfaceData, int> surfaceDataCache;
@@ -688,6 +759,10 @@ public partial class ComputeTest : Sprite2D
         bigMaterialList = new List<MaterialData>();
         bigSurfaceDescriptorList = new List<SurfaceDescriptor>();
         bigSphereList = new List<SphereData>();
+
+        bigLightList = new List<LightData>();
+
+        bigPortalList = new List<PortalData>();
 
         // Process node will scan the nodes and populate the surfaceInstances and genericLights.
         if(surfaceInstances == null)
@@ -711,8 +786,11 @@ public partial class ComputeTest : Sprite2D
         indexDataBytes = GetBytes(bigIndexList, SIZE_NUM);
         materialDataBytes = GetBytes(bigMaterialList, SIZE_MATERIAL);
 
-        // for(int i=0; i<bigMaterialList.Count; i++) {
-        //     GD.Print(bigMaterialList[i].alpha);
+        lightDataBytes = GetBytes(bigLightList, SIZE_LIGHT);
+        portalDataBytes = GetBytes(bigPortalList, SIZE_PORTAL);
+
+        // for(int i=0; i<bigLightList.Count; i++) {
+        //     GD.Print(bigLightList[i]);
         // }
     }
 
@@ -737,6 +815,7 @@ public partial class ComputeTest : Sprite2D
         rd.BufferUpdate(normalBuffer, 0, (uint)normalDataBytes.Length, normalDataBytes);
         rd.BufferUpdate(uvBuffer, 0, (uint)uvDataBytes.Length, uvDataBytes);
         rd.BufferUpdate(indexBuffer, 0, (uint)indexDataBytes.Length, indexDataBytes);
+        rd.BufferUpdate(lightDataBuffer, 0, (uint)indexDataBytes.Length, lightDataBytes);
     }
 
     public void UpdateSettings() {
@@ -874,6 +953,7 @@ public partial class ComputeTest : Sprite2D
         settings.checkerboard = false;
 
         windowSize = Resolution;
+        projectedViewMaterial = ProjectedView.MaterialOverride as ShaderMaterial;
 
         if (!Engine.IsEditorHint())
         {
@@ -892,6 +972,9 @@ public partial class ComputeTest : Sprite2D
 
     private bool lastFrameComputed = true;
 
+    private float defaultDistance = 0f;
+    private Vector3 defaultCameraPosition;
+
     public override void _Process(double delta)
     {
         if (!Engine.IsEditorHint())
@@ -905,6 +988,24 @@ public partial class ComputeTest : Sprite2D
                     GD.Print("Failed to compute last frame on time, skipping this frame!");
                 }
                 t = 0;
+            } else {
+                float distance = ProjectedView.GlobalPosition.DistanceTo(Camera.GlobalPosition);
+                if(distance < defaultDistance) {
+                    ProjectedView.GlobalPosition = Camera.GlobalPosition - Camera.GlobalTransform.Basis.Z * CalculateOffset(Camera.Fov);
+                } else {
+                    Vector3 direction = ProjectedView.GlobalPosition - Camera.GlobalPosition;
+                    Vector2 difference = new Vector2(direction.Dot(-Camera.Basis.X), direction.Dot(-Camera.Basis.Y));
+                    direction = direction.Normalized();
+                    
+                    Vector2 angles;
+                    angles.X = Mathf.Atan2(-direction.X, direction.Z);
+                    angles.Y = Mathf.Asin(direction.Y);
+
+                    projectedViewMaterial.SetShaderParameter("angles", angles);
+                    projectedViewMaterial.SetShaderParameter("offset", difference);
+                    // GD.Print(difference);
+                }
+                projectedViewMaterial.SetShaderParameter("dist", distance - defaultDistance);
             }
 
             t += delta;

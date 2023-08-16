@@ -8,4 +8,11 @@ size = Vector2(1280, 720)
 [resource]
 render_priority = 0
 shader = ExtResource("1_0kfhn")
+shader_parameter/depth = false
+shader_parameter/angles = null
+shader_parameter/offset = null
+shader_parameter/screenSize = null
+shader_parameter/dist = 0.0
+shader_parameter/offsetMultiplier = 0.0
+shader_parameter/depthMultiplier = 0.005
 shader_parameter/_Texture = SubResource("PlaceholderTexture2D_065oa")

@@ -70,21 +70,21 @@ mesh = ExtResource("6_y5i4f")
 script = ExtResource("5_v5vg7")
 
 [node name="Sphere2" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.724151, 0.262467, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.724151, 0.290013, 0)
 material_override = ExtResource("8_ena8t")
 mesh = ExtResource("6_y5i4f")
 skeleton = NodePath("../Sphere")
 script = ExtResource("5_v5vg7")
 
 [node name="Sphere3" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.199886, 0.262467, -0.578323)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.199886, 0.290013, -0.578323)
 material_override = ExtResource("2_xdsjy")
 mesh = ExtResource("6_y5i4f")
 skeleton = NodePath("../Sphere")
 script = ExtResource("5_v5vg7")
 
 [node name="Sphere4" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.711952, 0.262467, 0.482998)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.711952, 0.290013, 0.482998)
 material_override = ExtResource("9_46u08")
 mesh = ExtResource("6_y5i4f")
 skeleton = NodePath("../Sphere")

@@ -10,7 +10,7 @@ struct Light {
     float colorR;
     float colorG;
     float colorB;
-    float intensity;
+    float energy;
     bool isDirectionalLight;
     float directionX;
     float directionY;
@@ -58,6 +58,17 @@ struct Sphere {
     float radius;
 };
 
+struct Portal {
+    float positionX;
+    float positionY;
+    float positionZ;
+    float rotationX;
+    float rotationY;
+    float rotationZ;
+    float width;
+    float height;
+    int otherID;
+};
 
 struct Material {
 	float albedoR;
@@ -136,22 +147,16 @@ layout(binding = 10, std430) readonly buffer SphereBuffer {
     Sphere spheres[];
 } sphereBuffer;
 
-// // Albedo texture array
+layout(binding = 11, std430) readonly buffer PortalBuffer {
+    Portal portals[];
+} portalBuffer;
+
+// Texture array
 // layout(binding = 8) uniform texture2DArray albedoTextures;
 
-// // Roughness texture array
-// layout(binding = 9) uniform texture2DArray roughnessTextures;
-
-// // Emissive texture array
-// layout(binding = 10) uniform texture2DArray emissiveTextures;
-
-// // Alpha texture array
-// layout(binding = 11) uniform texture2DArray alphaTextures;
-
-// layout(binding = 12, rgba32f) uniform image2D ENVIRONMENT;
-
 const float FAR = 4000.0f;
-const float SKY_MULT = 0.75f;
+const float MAX_DEPTH = 10.0f;
+const float SKY_MULT = 0.25f;
 const float RAY_POS_NORMAL_NUDGE = 0.01f;
 const float TWO_PI = 6.28318530718f;
 
@@ -168,6 +173,9 @@ struct HitInfo {
 	vec3 point;
 	vec3 normal;
 	Material material;
+    bool portalHit;
+    int portalID;
+    vec2 portalUV;
 };
 
 vec3 GetSkyGradient(Ray ray) {
@@ -273,6 +281,38 @@ bool RayTriangle(in Ray ray, vec3 a, vec3 b, vec3 c, vec3 normA, vec3 normB, vec
         return true;
     }
 
+    return false;
+}
+
+bool RayPortalRect(Ray ray, Portal portal, out float t, out vec2 uv) {
+    vec3 rectCenter = vec3(portal.positionX, portal.positionY, portal.positionZ);
+    vec3 dir = normalize(ray.dir);
+    
+    // Apply inverse rotation to the ray and rectangle
+    vec3 rayOriginRotated = ray.origin - rectCenter;
+    vec3 rayOriginInvRot = mat3(
+        vec3(portal.rotationX, 0, 0),
+        vec3(0, portal.rotationY, 0),
+        vec3(0, 0, portal.rotationZ)
+    ) * rayOriginRotated;
+    
+    vec3 rayDirInvRot = mat3(
+        vec3(portal.rotationX, 0, 0),
+        vec3(0, portal.rotationY, 0),
+        vec3(0, 0, portal.rotationZ)
+    ) * dir;
+    
+    // Calculate intersection with the rotated rectangle
+    vec3 p = rayOriginInvRot / rayDirInvRot;
+    
+    t = p.x;
+    uv.x = p.y;
+    uv.y = p.z;
+    
+    if (t > 0.0 && uv.x >= 0.0 && uv.x <= portal.width && uv.y >= 0.0 && uv.y <= portal.height) {
+        return true;
+    }
+    
     return false;
 }
 
@@ -448,6 +488,23 @@ void TraceScene(in Ray ray, inout HitInfo hitInfo) {
             hitInfo.material = material;
         }
     }
+
+    for(int i=0; i < portalBuffer.portals.length(); i++) {
+        Portal portal = portalBuffer.portals[i];
+        float t;
+        vec2 uv;
+        
+        if (RayPortalRect(ray, portal, t, uv)) {
+            if (!hitInfo.didHit || t < hitInfo.dist) {
+                hitInfo.didHit = true;
+                hitInfo.dist = t;
+                hitInfo.point = ray.origin + t * ray.dir;
+                hitInfo.portalHit = true;
+                hitInfo.portalID = portal.otherID;
+                hitInfo.portalUV = uv;
+            }
+        }
+    }
 }
 
 bool Refract(vec3 incidentDir, vec3 normal, float refractiveIndex, out vec3 refractedDir)
@@ -464,17 +521,39 @@ bool Refract(vec3 incidentDir, vec3 normal, float refractiveIndex, out vec3 refr
     }
 }
 
-vec3 GetColorForRay(in Ray ray, inout uint rngState)
+Ray RayPortal(Ray currentRay, HitInfo hitInfo) {
+    Portal portal = portalBuffer.portals[hitInfo.portalID];
+
+    vec3 position = vec3(portal.positionX, portal.positionY, portal.positionZ);
+    
+    vec3 portalNormal = normalize(mat3(
+        vec3(portal.rotationX, 0, 0),
+        vec3(0, portal.rotationY, 0),
+        vec3(0, 0, portal.rotationZ)
+    ) * cross(vec3(0, 0, 1), vec3(0, 1, 0)));
+    
+    vec3 offsetPoint = position + portalNormal * 0.001; // Offset the point slightly to avoid self-intersection
+    
+    vec3 exitDirection = reflect(currentRay.dir, portalNormal);
+    vec3 exitOrigin = offsetPoint + exitDirection * 0.001; // Offset the origin slightly to avoid starting inside the portal
+    
+    Ray newRay;
+    newRay.origin = exitOrigin;
+    newRay.dir = exitDirection;
+    
+    return newRay;
+}
+
+vec4 GetColorForRay(in Ray ray, inout uint rngState)
 {
     vec3 ret = vec3(0.0f, 0.0f, 0.0f);
+    float depth = 1;
     vec3 throughput = vec3(1.0f, 1.0f, 1.0f);
 	
 	Ray nextRay;
 	nextRay.origin = ray.origin;
 	nextRay.dir = ray.dir;
 
-    vec3 test;
-     
     for(uint rayIndex = 0u; rayIndex <= settingsBuffer.numRays; ++rayIndex) {
         for (uint bounceIndex = 0u; bounceIndex <= settingsBuffer.maxBounces; ++bounceIndex)
         {
@@ -486,46 +565,74 @@ vec3 GetColorForRay(in Ray ray, inout uint rngState)
             // if the ray missed, we are done
             if (hitInfo.dist == FAR) {
                 vec3 skyColor = GetSkyGradient(ray) / settingsBuffer.numRays;
-                ret += skyColor * SKY_MULT * throughput;
+                ret += skyColor * throughput * 0.5f;
+                if(rayIndex == 0 && bounceIndex == 0u) depth = 1.0f;
                 break;
+            } else {
+                if(rayIndex == 0 && bounceIndex == 0u) depth = hitInfo.dist / MAX_DEPTH;
             }
+
+            if(hitInfo.portalHit) {
+
+                ret = vec3(0,0,0);
+                return vec4(ret, 0);
+
+                nextRay = RayPortal(nextRay, hitInfo);
+
+            } else {
                 
-            // update the ray position
-            nextRay.origin = (nextRay.origin + nextRay.dir * hitInfo.dist) + hitInfo.normal * RAY_POS_NORMAL_NUDGE;
+                // update the ray position
+                nextRay.origin = (nextRay.origin + nextRay.dir * hitInfo.dist) + hitInfo.normal * RAY_POS_NORMAL_NUDGE;
 
-            Material mat = hitInfo.material;
-            
-            // calculate whether we are going to do a diffuse or specular reflection ray 
-            float doSpecular = (RandomFloat01(rngState) < hitInfo.material.specularity) ? 1.0f : 0.0f;
-            
-            // Calculate a new ray direction.
-            // Diffuse uses a normal oriented cosine weighted hemisphere sample.
-            // Perfectly smooth specular uses the reflection ray.
-            // Rough (glossy) specular lerps from the smooth specular to the rough diffuse by the material roughness squared
-            // Squaring the roughness is just a convention to make roughness feel more linear perceptually.
-            vec3 diffuseRayDir = normalize(hitInfo.normal + RandomUnitVector(rngState));
-            vec3 specularRayDir = reflect(ray.dir, hitInfo.normal);
-            specularRayDir = normalize(mix(specularRayDir, diffuseRayDir, mat.roughness));
-            nextRay.dir = mix(diffuseRayDir, specularRayDir, doSpecular);
-            
-            // add in emissive lighting
-            ret += vec3(mat.emissiveR, mat.emissiveG, mat.emissiveB) * throughput;
-            
-            // update the colorMultiplier
-            throughput *= vec3(mat.albedoR, mat.albedoG, mat.albedoB);
+                Material mat = hitInfo.material;
+                
+                // calculate whether we are going to do a diffuse or specular reflection ray 
+                float doSpecular = (RandomFloat01(rngState) < hitInfo.material.specularity) ? 1.0f : 0.0f;
+                
+                // Calculate a new ray direction.
+                // Diffuse uses a normal oriented cosine weighted hemisphere sample.
+                // Perfectly smooth specular uses the reflection ray.
+                // Rough (glossy) specular lerps from the smooth specular to the rough diffuse by the material roughness squared
+                // Squaring the roughness is just a convention to make roughness feel more linear perceptually.
+                vec3 diffuseRayDir = normalize(hitInfo.normal + RandomUnitVector(rngState));
+                vec3 specularRayDir = reflect(ray.dir, hitInfo.normal);
+                specularRayDir = normalize(mix(specularRayDir, diffuseRayDir, mat.roughness));
+                nextRay.dir = mix(diffuseRayDir, specularRayDir, doSpecular);
+                
+                // add in emissive lighting
 
-            // Russian Roulette
-            // As the throughput gets smaller, the ray is more likely to get terminated early.
-            // Survivors have their value boosted to make up for fewer samples being in the average.
-            float p = max(throughput.r, max(throughput.g, throughput.b));
-            if (RandomFloat01(rngState) > p)
-                break;
+                ret += vec3(mat.emissiveR, mat.emissiveG, mat.emissiveB) * throughput;
+
+                // Loop through all lights
+                for (int lightIndex = 0; lightIndex < lightBuffer.lights.length(); lightIndex++) {
+                    Light light = lightBuffer.lights[lightIndex];
+                    vec3 lightColor = vec3(light.colorR, light.colorG, light.colorB);
+                    if(!light.isDirectionalLight) {
+                        vec3 lightPosition = vec3(light.positionX, light.positionY, light.positionZ);
+                        float dist = distance(hitInfo.point, lightPosition);
+                        if(dist < light.directionX) {
+                            float t = 1.0 - dist / light.directionX;
+                            ret += (lightColor * t * light.energy * 2) / settingsBuffer.numRays;
+                        }
+                    }
+                }
+                
+                // update the colorMultiplier
+                throughput *= vec3(mat.albedoR, mat.albedoG, mat.albedoB);
+
+                // Russian Roulette
+                // As the throughput gets smaller, the ray is more likely to get terminated early.
+                // Survivors have their value boosted to make up for fewer samples being in the average.
+                float p = max(throughput.r, max(throughput.g, throughput.b));
+                if (RandomFloat01(rngState) > p)
+                    break;
+
+            }
         }
     }
 
-
     // return pixel color
-    return ret;
+    return vec4(ret, depth);
 }
 
 // The code we want to execute in each invocation
@@ -555,9 +662,7 @@ void main() {
     vec3 dir = -normalize(view.xyz - origin);
     Ray ray = CreateRay(origin, dir);
 
-    
-
-    vec4 color = vec4(GetColorForRay(ray, rngState), 1.0f);
+    vec4 color = GetColorForRay(ray, rngState);
 
     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
     vec4 lastFrameColor = imageLoad(OUTPUT_TEXTURE, texel);
