@@ -14,7 +14,7 @@ public partial class SettingsMenu : Control
 	[Export(PropertyHint.Layers3DRender)] private uint projectedViewCameraMask;
     [Export] private Slider slider;
 
-	[Export] private ComputeTest computeTest;
+	[Export] private CustomRenderer customRenderer;
 	[Export] private Panel settingsPanel;
 	[Export] private OptionButton renderResolutionOptions;
 	[Export] private OptionButton windowResolutionOptions;
@@ -38,11 +38,11 @@ public partial class SettingsMenu : Control
     {
         isMenuVisible = Visible;
 
-		temporalAccumulationCheck.ButtonPressed = computeTest.settings.temporalAccumulation;
-		checkerboardCheck.ButtonPressed = computeTest.settings.checkerboard;
+		temporalAccumulationCheck.ButtonPressed = customRenderer.settings.temporalAccumulation;
+		checkerboardCheck.ButtonPressed = customRenderer.settings.checkerboard;
 
-		numRays.Value = computeTest.settings.numRays;
-		maxBounces.Value = computeTest.settings.maxBounces;
+		numRays.Value = customRenderer.settings.numRays;
+		maxBounces.Value = customRenderer.settings.maxBounces;
 
 		slider.ValueChanged += (value) => {
 			shaderMaterial.SetShaderParameter("t", value);
@@ -51,14 +51,14 @@ public partial class SettingsMenu : Control
 		renderResolutionOptions.ItemSelected += (index) => {
 			if(index >= resolutions.Length || index < 0) return;
 
-			computeTest.UpdateRenderResolution(resolutions[index]);
+			customRenderer.UpdateRenderResolution(resolutions[index]);
 
 			if(viewReprojectionCheck.ButtonPressed) {
 				camera.CullMask = projectedViewCameraMask;
 			} else {
 				camera.CullMask = defaultCameraMask;
 			}
-			computeTest.ProjectedViewEnabled = viewReprojectionCheck.ButtonPressed;
+			customRenderer.ProjectedViewEnabled = viewReprojectionCheck.ButtonPressed;
 		};
 
 		windowResolutionOptions.ItemSelected += (index) => {
@@ -66,51 +66,51 @@ public partial class SettingsMenu : Control
 
 			int scaleIndex = (int)Mathf.Clamp(index, 2, 4);
 			settingsPanel.Scale = new Vector2(scales[scaleIndex], scales[scaleIndex]);
-			computeTest.UpdateWindowResolution(resolutions[index]);
+			customRenderer.UpdateWindowResolution(resolutions[index]);
 		};
 
 		fullScreenCheck.Toggled += (value) => {
 			windowResolutionOptions.Disabled = value;
 
 			if(value) {
-				computeTest.UpdateWindowResolution(DisplayServer.ScreenGetSize());
+				customRenderer.UpdateWindowResolution(DisplayServer.ScreenGetSize());
 				DisplayServer.WindowSetMode(DisplayServer.WindowMode.Fullscreen);
 			} else {
 				GD.Print(resolutions[windowResolutionOptions.Selected]);
 				DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed);
-				computeTest.UpdateWindowResolution(resolutions[windowResolutionOptions.Selected]);
+				customRenderer.UpdateWindowResolution(resolutions[windowResolutionOptions.Selected]);
 			}
 		};
 
 		numRays.ValueChanged += (value) => {
-			computeTest.settings.numRays = (uint)value;
-			computeTest.UpdateSettings();
+			customRenderer.settings.numRays = (uint)value;
+			customRenderer.UpdateSettings();
 		};
 
 		maxBounces.ValueChanged += (value) => {
-			computeTest.settings.maxBounces = (uint)value;
-			computeTest.UpdateSettings();
+			customRenderer.settings.maxBounces = (uint)value;
+			customRenderer.UpdateSettings();
 		};
 
 		targetFPS.ValueChanged += (value) => {
-			computeTest.interval = 1.0 / value;
+			customRenderer.interval = 1.0 / value;
 		};
 
 		temporalAccumulationCheck.Toggled += (value) => {
-			computeTest.settings.temporalAccumulation = value;
-			computeTest.UpdateSettings();
+			customRenderer.settings.temporalAccumulation = value;
+			customRenderer.UpdateSettings();
 		};
 
 		recentFrameBias.ValueChanged += (value) => {
-			computeTest.settings.recentFrameBias = (float)value;
-			if(computeTest.settings.temporalAccumulation) {
-				computeTest.UpdateSettings();
+			customRenderer.settings.recentFrameBias = (float)value;
+			if(customRenderer.settings.temporalAccumulation) {
+				customRenderer.UpdateSettings();
 			}
 		};
 
 		checkerboardCheck.Toggled += (value) => {
-			computeTest.settings.checkerboard = value;
-			computeTest.UpdateSettings();
+			customRenderer.settings.checkerboard = value;
+			customRenderer.UpdateSettings();
 		};
 
 		viewReprojectionCheck.Toggled += (value) => {
@@ -121,7 +121,7 @@ public partial class SettingsMenu : Control
 			} else {
 				camera.CullMask = defaultCameraMask;
 			}
-			computeTest.ProjectedViewEnabled = value;
+			customRenderer.ProjectedViewEnabled = value;
 		};
 
 		parallaxSlider.ValueChanged += (value) => {

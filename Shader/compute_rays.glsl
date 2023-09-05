@@ -163,7 +163,6 @@ const float TWO_PI = 6.28318530718f;
 struct Ray {
     vec3 origin;
     vec3 dir;
-    vec3 energy;
 };
 
 struct HitInfo {
@@ -193,14 +192,13 @@ Ray CreateRay(vec3 origin, vec3 dir) {
     Ray ray;
     ray.origin = origin;
     ray.dir = dir;
-    ray.energy = vec3(1.0f);
 
     return ray;
 }
 
-bool RaySphere(in Ray ray, in vec3 sphereCentre, in float sphereRadius, inout HitInfo hitInfo)
+bool RaySphere(in Ray ray, in vec3 sphereCenter, in float sphereRadius, inout HitInfo hitInfo)
 {
-	vec3 offsetRayOrigin = ray.origin - sphereCentre;
+	vec3 offsetRayOrigin = ray.origin - sphereCenter;
 	// From the equation: sqrLength(rayOrigin + rayDir * dst) = radius^2
 	// Solving for dst results in a quadratic equation with coefficients:
 	float a = dot(ray.dir, ray.dir); // a = 1 (assuming unit vector)
@@ -219,7 +217,7 @@ bool RaySphere(in Ray ray, in vec3 sphereCentre, in float sphereRadius, inout Hi
 			hitInfo.didHit = true;
 			hitInfo.dist = dist;
 			hitInfo.point = ray.origin + ray.dir * dist;
-			hitInfo.normal = normalize(hitInfo.point - sphereCentre);
+			hitInfo.normal = normalize(hitInfo.point - sphereCenter);
             return true;
 		}
 
@@ -263,8 +261,6 @@ bool RayTriangle(in Ray ray, vec3 a, vec3 b, vec3 c, vec3 normA, vec3 normB, vec
         
         // Calculate the dot product between ray direction and triangle normal
         float dotProduct = dot(normal, ray.dir);
-
-        hitInfo.normal = normal;
         
         // Check if the hit is from the front side of the triangle
         if (dotProduct > 0.0) {
@@ -274,10 +270,10 @@ bool RayTriangle(in Ray ray, vec3 a, vec3 b, vec3 c, vec3 normA, vec3 normB, vec
         hitInfo.didHit = true;
         hitInfo.dist = t;
         hitInfo.point = ray.origin + ray.dir * t;
-        
+
         // Set the hitInfo normal to the calculated normal
-        
-        
+        hitInfo.normal = normal;
+
         return true;
     }
 
@@ -389,7 +385,6 @@ void TraceScene(in Ray ray, inout HitInfo hitInfo) {
     Sphere sphere;
     Material material;
     Ray offsetRay;
-    offsetRay.energy = ray.energy;
 
     Material defaultMaterial;
     defaultMaterial.albedoR = 1;
@@ -573,12 +568,10 @@ vec4 GetColorForRay(in Ray ray, inout uint rngState)
             }
 
             if(hitInfo.portalHit) {
-
                 ret = vec3(0,0,0);
                 return vec4(ret, 0);
 
                 nextRay = RayPortal(nextRay, hitInfo);
-
             } else {
                 
                 // update the ray position
@@ -600,7 +593,6 @@ vec4 GetColorForRay(in Ray ray, inout uint rngState)
                 nextRay.dir = mix(diffuseRayDir, specularRayDir, doSpecular);
                 
                 // add in emissive lighting
-
                 ret += vec3(mat.emissiveR, mat.emissiveG, mat.emissiveB) * throughput;
 
                 // Loop through all lights
@@ -623,9 +615,11 @@ vec4 GetColorForRay(in Ray ray, inout uint rngState)
                 // Russian Roulette
                 // As the throughput gets smaller, the ray is more likely to get terminated early.
                 // Survivors have their value boosted to make up for fewer samples being in the average.
-                float p = max(throughput.r, max(throughput.g, throughput.b));
-                if (RandomFloat01(rngState) > p)
-                    break;
+                {
+                    float p = max(throughput.r, max(throughput.g, throughput.b));
+                    if (RandomFloat01(rngState) > p)
+                        break;
+                }
 
             }
         }
@@ -665,9 +659,9 @@ void main() {
     vec4 color = GetColorForRay(ray, rngState);
 
     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
-    vec4 lastFrameColor = imageLoad(OUTPUT_TEXTURE, texel);
 
     if(settingsBuffer.temporalAccumulation) {
+        vec4 lastFrameColor = imageLoad(OUTPUT_TEXTURE, texel);
         color = mix(lastFrameColor, color, settingsBuffer.recentFrameBias + 1.0f / float(cameraBuffer.frame + 1));
     }
 

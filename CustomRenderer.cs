@@ -5,7 +5,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-public partial class ComputeTest : Sprite2D
+public partial class CustomRenderer : Sprite2D
 {
     [Export] public Vector2I Resolution = new Vector2I(1280, 720);
     [Export] Camera3D Camera;
@@ -137,8 +137,6 @@ public partial class ComputeTest : Sprite2D
         public Vector3 scale;
         public Vector3 boxMin;
         public Vector3 boxMax;
-        // public int materialIndex;
-        // public int surfaceIndex;
         public MaterialData material;
         public SurfaceData surfaceData;
     }
@@ -257,7 +255,7 @@ public partial class ComputeTest : Sprite2D
 
         rd = RenderingServer.CreateLocalRenderingDevice();
 
-        var shaderFile = GD.Load<RDShaderFile>("res://Shader/rtx_compute.glsl");
+        var shaderFile = GD.Load<RDShaderFile>("res://Shader/compute_rays.glsl");
         var shaderBytecode = shaderFile.GetSpirV();
         shader = rd.ShaderCreateFromSpirV(shaderBytecode);
 
